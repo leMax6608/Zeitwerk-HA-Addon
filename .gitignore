@@ -1,0 +1,13 @@
+data/
+__pycache__/
+*.pyc
+.sites-runtime/
+*.zip
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.json.bak
+.env
+.env.*
+*.log

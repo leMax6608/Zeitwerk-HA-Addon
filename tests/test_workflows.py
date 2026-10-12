@@ -1,0 +1,231 @@
+"""Regression checks for finalizing a day and entering a vacation range."""
+
+import importlib.util
+import io
+import json
+import os
+import sqlite3
+import tempfile
+import threading
+import unittest
+import urllib.error
+import urllib.request
+from unittest.mock import patch
+from datetime import date, datetime, timedelta
+from pathlib import Path
+
+
+class ZeitwerkWorkflowTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        os.environ["DATA_DIR"] = cls.temp.name
+        spec = importlib.util.spec_from_file_location(
+            "zeitwerk_test_server", Path(__file__).resolve().parents[1] / "zeitwerk" / "app" / "server.py"
+        )
+        cls.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.module)
+        cls.module.init_db()
+        cls.server = cls.module.ZeitwerkServer(("127.0.0.1", 0), cls.module.Handler)
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+        cls.url = f"http://127.0.0.1:{cls.server.server_port}/"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.thread.join(timeout=5)
+        cls.temp.cleanup()
+
+    def request(self, path, payload=None):
+        body = json.dumps(payload or {}).encode() if payload is not None else None
+        request = urllib.request.Request(
+            self.url + path, data=body,
+            headers={"Content-Type": "application/json"} if body is not None else {},
+        )
+        with urllib.request.urlopen(request) as response:
+            return json.load(response)
+
+    def test_notification_link_uses_actual_repository_slug(self):
+        for repository, expected in (("local", "/app/local_zeitwerk"), ("a1b2c3d4", "/app/a1b2c3d4_zeitwerk")):
+            response = io.BytesIO(json.dumps({"data": {"repository": repository, "slug": "zeitwerk"}}).encode())
+            with patch.dict(os.environ, {"SUPERVISOR_TOKEN": "test-token"}):
+                with patch.object(self.module, "urlopen", return_value=response):
+                    self.assertEqual(self.module.zeitwerk_app_url(), expected)
+
+    def test_finalize_once_and_reopen_only_by_explicit_route(self):
+        started = self.request("api/timer/start", {"type": "B"})
+        self.assertTrue(started["entry"]["is_running"])
+        finished = self.request("api/timer/stop", {})
+        self.assertTrue(finished["entry"]["finalized"])
+        with self.assertRaises(urllib.error.HTTPError) as blocked:
+            self.request("api/timer/start", {"type": "B"})
+        blocked.exception.close()
+
+        # Give the explicit reopen route a one-minute-old end time.
+        now = datetime.now()
+        with self.module.DB_LOCK, self.module.db() as con:
+            con.execute(
+                "UPDATE entries SET start_time=?, end_time=? WHERE id=?",
+                ((now - timedelta(minutes=2)).strftime("%H:%M:%S"),
+                 (now - timedelta(minutes=1)).strftime("%H:%M:%S"),
+                 finished["entry"]["id"]),
+            )
+        reopened = self.request("api/timer/reopen", {})
+        self.assertTrue(reopened["entry"]["is_running"])
+        self.assertFalse(reopened["entry"]["finalized"])
+        self.assertEqual(len(reopened["entry"]["breaks"]), 1)
+        self.request("api/timer/stop", {})
+
+    def test_free_day_credits_target_without_using_vacation(self):
+        day = date.today() + timedelta(days=21 - date.today().weekday())
+        payload = {"work_date": day.isoformat(), "type": "FT", "note": "Feiertag"}
+        saved = self.request("api/entries", payload)["entry"]
+        self.assertEqual(saved["worked_minutes"], 0)
+        self.assertEqual(saved["account_minutes"], self.module.daily_target(self.module.get_settings(), day.isoformat()))
+        self.assertEqual(saved["type_label"], "Frei / Feiertag")
+        with self.assertRaises(urllib.error.HTTPError) as duplicate:
+            self.request("api/entries", payload)
+        duplicate.exception.close()
+        with self.assertRaises(urllib.error.HTTPError) as legacy_type:
+            self.request("api/entries", {"work_date": day.isoformat(), "type": "G", "start_time": "09:00", "end_time": "17:00"})
+        legacy_type.exception.close()
+
+    def test_vacation_range_skips_free_days_and_is_idempotent(self):
+        first = date.today() + timedelta(days=7 - date.today().weekday())
+        last = first + timedelta(days=6)
+        payload = {"start_date": first.isoformat(), "end_date": last.isoformat(), "note": "Testurlaub"}
+        saved = self.request("api/vacation/range", payload)
+        self.assertEqual(saved["added"], 5)
+        self.assertEqual(saved["skipped"], 2)
+        repeated = self.request("api/vacation/range", payload)
+        self.assertEqual(repeated["added"], 0)
+        state = self.request("api/state")
+        self.assertEqual(state["next_vacation"]["start_date"], first.isoformat())
+        self.assertEqual(state["next_vacation"]["workdays"], 5)
+        today_account = sum(entry["account_minutes"] for entry in state["today_entries"])
+        today_target = self.module.daily_target(state["settings"], date.today().isoformat())
+        self.assertEqual(state["summary"]["balance_minutes"], today_account - today_target)
+        with self.assertRaises(urllib.error.HTTPError) as blocked:
+            self.request("api/vacation/range", {"start_date": date.today().isoformat(), "end_date": date.today().isoformat()})
+        blocked.exception.close()
+
+    def test_vacation_can_start_on_existing_free_day_without_using_leave(self):
+        first = date.today() + timedelta(days=28 - date.today().weekday())
+        last = first + timedelta(days=6)
+        self.request("api/entries", {"work_date": first.isoformat(), "type": "FT", "note": "Betriebsfrei"})
+        saved = self.request("api/vacation/range", {
+            "start_date": first.isoformat(), "end_date": last.isoformat(), "note": "Urlaub ab freiem Tag",
+        })
+        self.assertEqual(saved["added"], 4)
+        self.assertEqual(saved["workdays"], 4)
+        self.assertEqual(saved["skipped"], 3)
+        self.assertEqual(saved["free_days"], 1)
+        state = self.request("api/state")
+        period = [entry for entry in state["entries"] if first.isoformat() <= entry["work_date"] <= last.isoformat()]
+        self.assertEqual(len(period), 5)
+        self.assertEqual(next(entry for entry in period if entry["work_date"] == first.isoformat())["type"], "FT")
+        self.assertEqual(sum(entry["type"] == "U" for entry in period), 4)
+        self.assertEqual(state["next_vacation"]["start_date"], (first + timedelta(days=1)).isoformat())
+        repeated = self.request("api/vacation/range", {"start_date": first.isoformat(), "end_date": last.isoformat()})
+        self.assertEqual(repeated["added"], 0)
+        self.assertEqual(repeated["free_days"], 1)
+
+    def test_x_day_is_complete_and_hidden_extra_hours_are_persistent(self):
+        day = date.today() + timedelta(days=35 - date.today().weekday())
+        self.request("api/settings", {"monthly_gross_eur": 3000})
+        created = self.request("api/entries", {"work_date": day.isoformat(), "type": "X"})["entry"]
+        target = self.module.daily_target(self.module.get_settings(), day.isoformat())
+        self.assertEqual(created["worked_minutes"], target)
+        self.assertEqual(created["extra_work_minutes"], 0)
+        daily_gross = 3000 / self.module.monthly_workdays(self.module.get_settings(), day.isoformat())
+        self.assertAlmostEqual(created["estimated_gross_eur"], daily_gross, places=2)
+        updated = self.request("api/entries/x-extra", {"work_date": day.isoformat(), "extra_duration": "01:30"})["entry"]
+        self.assertEqual(updated["worked_minutes"], target + 90)
+        self.assertEqual(updated["extra_work_minutes"], 90)
+        self.assertAlmostEqual(updated["estimated_gross_eur"], daily_gross, places=2)
+        repeated = self.request("api/entries/x-extra", {"work_date": day.isoformat(), "extra_duration": "01:30"})["entry"]
+        self.assertEqual(repeated["worked_minutes"], target + 90)
+        state = self.request("api/state")
+        self.assertEqual(next(item for item in state["entries"] if item["work_date"] == day.isoformat())["extra_work_minutes"], 90)
+        with self.assertRaises(urllib.error.HTTPError) as invalid:
+            self.request("api/entries/x-extra", {"work_date": date.today().isoformat(), "extra_duration": "00:30"})
+        invalid.exception.close()
+
+    def test_monthly_gross_is_split_across_configured_workdays(self):
+        settings = self.module.get_settings()
+        settings["monthly_gross_eur"] = 3000
+        first = date(2026, 10, 1)
+        count = self.module.monthly_workdays(settings, first.isoformat())
+        self.assertEqual(count, 22)
+        target = self.module.daily_target(settings, first.isoformat())
+        self.assertAlmostEqual(self.module.estimated_gross(settings, first.isoformat(), target), 3000 / count, places=2)
+        self.assertAlmostEqual(self.module.estimated_gross(settings, first.isoformat(), target / 2), 3000 / count / 2, places=2)
+        self.assertAlmostEqual(self.module.estimated_gross(settings, first.isoformat(), target + 120), 3000 / count, places=2)
+        november = date(2026, 11, 2)
+        self.assertEqual(self.module.monthly_workdays(settings, november.isoformat()), 21)
+        self.assertGreater(
+            self.module.estimated_gross(settings, november.isoformat(), target),
+            self.module.estimated_gross(settings, first.isoformat(), target),
+        )
+
+    def test_legacy_completed_work_is_finalized_without_losing_times(self):
+        with tempfile.TemporaryDirectory() as old_data:
+            old_path = Path(old_data) / "zeitwerk.db"
+            con = sqlite3.connect(old_path)
+            con.execute(
+                """CREATE TABLE entries (id INTEGER PRIMARY KEY, work_date TEXT NOT NULL,
+                type TEXT NOT NULL, start_time TEXT, end_time TEXT,
+                manual_break_minutes INTEGER NOT NULL DEFAULT 0,
+                breaks_json TEXT NOT NULL DEFAULT '[]', note TEXT NOT NULL DEFAULT '',
+                commute INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"""
+            )
+            con.execute(
+                """INSERT INTO entries VALUES (1, ?, 'X', '09:00', '17:00', 30, '[]', '', 0, ?, ?)""",
+                (date.today().isoformat(), datetime.now().isoformat(), datetime.now().isoformat()),
+            )
+            con.execute(
+                """INSERT INTO entries VALUES (2, ?, 'G', '10:00', '18:00', 30, '[]', 'Kunde', 1, ?, ?)""",
+                ((date.today() - timedelta(days=1)).isoformat(), datetime.now().isoformat(), datetime.now().isoformat()),
+            )
+            con.commit()
+            con.close()
+            os.environ["DATA_DIR"] = old_data
+            try:
+                spec = importlib.util.spec_from_file_location(
+                    "zeitwerk_legacy_test_server", Path(__file__).resolve().parents[1] / "zeitwerk" / "app" / "server.py"
+                )
+                migrated = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(migrated)
+                migrated.init_db()
+                with migrated.DB_LOCK, migrated.db() as restored:
+                    row = restored.execute("SELECT type,start_time,end_time,finalized FROM entries WHERE id=1").fetchone()
+                    business = restored.execute("SELECT type,start_time,end_time,commute,note FROM entries WHERE id=2").fetchone()
+                self.assertEqual(tuple(row), ("B", "09:00", "17:00", 1))
+                self.assertEqual(tuple(business), ("B", "10:00", "18:00", 1, "Geschäftlich (früher G) · Kunde"))
+                self.assertTrue(migrated.PRE_V4_PATH.exists())
+                self.assertTrue(migrated.PRE_G_MIGRATION_PATH.exists())
+                backup = sqlite3.connect(migrated.PRE_G_MIGRATION_PATH)
+                try:
+                    self.assertEqual(backup.execute("SELECT type FROM entries WHERE id=2").fetchone()[0], "G")
+                finally:
+                    backup.close()
+            finally:
+                os.environ["DATA_DIR"] = self.temp.name
+
+    def test_z_legacy_backup_import_converts_g_without_losing_context(self):
+        raw = {
+            "work_date": date.today().isoformat(), "type": "G", "start_time": "09:00", "end_time": "17:00",
+            "manual_break_minutes": 30, "breaks_json": "[]", "commute": 1, "note": "Außentermin",
+        }
+        result = self.request("api/import", {"version": 1, "entries": [raw], "settings": {}})
+        self.assertEqual(result["imported"], 1)
+        entry = self.request("api/state")["today_entries"][0]
+        self.assertEqual(entry["type"], "B")
+        self.assertEqual(entry["note"], "Geschäftlich (früher G) · Außentermin")
+        self.assertTrue(entry["finalized"])
+
+
+if __name__ == "__main__":
+    unittest.main()

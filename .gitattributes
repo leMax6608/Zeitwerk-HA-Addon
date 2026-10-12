@@ -1,0 +1,3 @@
+* text=auto
+zeitwerk/rootfs/** text eol=lf
+zeitwerk/Dockerfile text eol=lf

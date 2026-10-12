@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#14252b">
+  <meta name="description" content="Private Arbeitszeiterfassung für Home Assistant">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Zeitwerk">
+  <title>Zeitwerk · Arbeitszeit</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <script>
+    (() => {
+      const saved = localStorage.getItem("zeitwerk-theme") || "system";
+      const dark = saved === "dark" || (saved === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
+      document.documentElement.dataset.themePreference = saved;
+    })();
+  </script>
+  <link rel="stylesheet" href="styles.css?v=4.3.1">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-header">
+      <a class="brand" href="#dashboard" aria-label="Zeitwerk Startseite"><span class="brand-mark" aria-hidden="true"><svg><use href="#i-timer"></use></svg></span><span class="brand-copy"><b>Zeitwerk</b><small>Arbeitszeit</small></span></a>
+      <nav class="desktop-nav" aria-label="Hauptnavigation">
+        <button class="nav-item active" data-view="dashboard" type="button">Heute</button>
+        <button class="nav-item" data-view="calendar" type="button">Kalender</button>
+        <button class="nav-item" data-view="reports" type="button">Auswertung</button>
+        <button class="nav-item" data-view="settings" type="button">Einstellungen</button>
+      </nav>
+      <div class="header-actions"><div class="balance-chip" id="balanceChip"><span class="balance-icon"><svg><use href="#i-trend"></use></svg></span><span><small>Zeitkonto</small><b id="sidebarBalance">± 0:00</b></span></div><button class="icon-button" id="openEntry" type="button" aria-label="Zeit manuell eintragen"><svg><use href="#i-plus"></use></svg></button></div>
+    </header>
+
+    <main class="main-content">
+      <div class="page-intro"><div><p class="eyebrow" id="todayDate">HEUTE</p><h1 id="pageTitle">Dein Arbeitstag</h1></div></div>
+      <div class="connection-banner hidden" id="connectionBanner" role="alert"><svg><use href="#i-alert"></use></svg><div><b>Zeitwerk ist nicht erreichbar</b><span>Gespeicherte Zeiten bleiben erhalten.</span></div><button type="button" id="reconnectButton">Neu verbinden</button></div>
+      <div id="loadingState" class="loading-state" role="status"><span class="loader"></span>Wird geladen …</div>
+
+      <section class="view active" id="view-dashboard" aria-labelledby="pageTitle">
+        <div class="dashboard-primary">
+          <section class="timer-card" aria-label="Zeiterfassung">
+            <div class="timer-topline"><span class="live-badge"><i></i><span id="timerStatus">Bereit</span></span><div class="timer-type-picker" id="timerTypePicker" aria-label="Arbeitsort"><button class="active" data-type="B" type="button">Büro</button><button data-type="H" type="button">Homeoffice</button></div></div>
+            <div class="timer-focus"><span class="timer-kicker">Arbeitszeit</span><strong id="workTimerValue">00:00:00</strong><small id="workTimerHint">Noch nicht gestartet</small></div>
+            <div class="break-strip"><span><i></i>Pause</span><strong id="breakTimerValue">00:00:00</strong><small id="breakTimerHint">Noch keine Pause</small></div>
+            <div class="timer-actions" id="timerActions">
+              <button class="button primary-action" id="startTimer" type="button"><svg><use href="#i-play"></use></svg>Arbeit starten</button>
+              <button class="button stop-action" id="stopTimer" type="button" disabled><svg><use href="#i-stop"></use></svg>Arbeit beenden</button>
+              <button class="button secondary-action" id="pauseTimer" type="button" disabled><svg><use href="#i-pause"></use></svg>Pause starten</button>
+              <button class="button primary-action" id="resumeTimer" type="button" disabled><svg><use href="#i-play"></use></svg>Weiterarbeiten</button>
+            </div>
+            <div class="timer-meta"><div><span>Beginn</span><b id="metaStart">–</b></div><div><span>Ende</span><b id="metaEnd">–</b></div><div><span>Tagesziel</span><b id="metaTarget">–</b></div><div class="meta-status"><span>Status</span><b id="timerSubline">Nicht gestartet</b></div></div>
+            <button class="text-action" id="manualAdjust" type="button"><svg><use href="#i-edit"></use></svg>Zeiten korrigieren</button>
+          </section>
+
+          <section class="finished-card hidden" id="finishedCard" aria-label="Abgeschlossener Arbeitstag">
+            <div class="finished-eyebrow"><span class="finished-check"><svg><use href="#i-shield"></use></svg></span><span>ARBEITSTAG ABGESCHLOSSEN</span></div>
+            <div class="finished-main"><div><p id="finishedLead">Feierabend.</p><h2><span id="finishedHeadline">Heute hast du</span> <span id="finishedDuration">0:00</span> <span id="finishedUnit">gearbeitet.</span></h2><span class="finished-message" id="finishedMessage">Deine Zeit ist sicher gespeichert.</span></div><div class="finished-sun" aria-hidden="true"><svg><use href="#i-sun"></use></svg></div></div>
+            <div class="finished-facts"><div><span id="finishedSpanLabel">Beginn – Ende</span><b id="finishedSpan">–</b></div><div><span>Pause</span><b id="finishedBreak">–</b></div><div><span>Heute verdient</span><b id="finishedEarned">–</b></div><div><span>Zum Tagesziel</span><b id="finishedBalance">–</b></div></div>
+          </section>
+
+          <section class="card day-card">
+            <div class="card-heading day-card-heading"><div><p class="eyebrow">TAGESANSICHT</p><h2 id="dayDetailTitle">Heute</h2></div><button class="text-action" id="openTodayEntry" type="button">Manuell bearbeiten</button></div>
+            <div class="day-navigation" role="group" aria-label="Tag auswählen"><button id="prevDay" type="button" aria-label="Vorheriger Tag"><svg><use href="#i-left"></use></svg></button><button id="jumpToday" type="button">Heute</button><button id="nextDay" type="button" aria-label="Nächster Tag"><svg><use href="#i-right"></use></svg></button></div>
+            <div id="todayEntry" class="empty-inline"><div class="empty-icon"><svg><use href="#i-clock"></use></svg></div><div><b>Noch kein Eintrag</b><span>Starte den Timer oder trage den Tag manuell ein.</span></div></div>
+            <div class="pause-advice" id="pauseAdvice"><svg><use href="#i-shield"></use></svg><div><b>Pausen im Blick</b><span>Ab 6 Stunden gelten mindestens 30 Minuten Pause.</span></div></div>
+          </section>
+        </div>
+
+        <div class="dashboard-secondary">
+          <section class="card week-card">
+            <div class="card-heading"><div><p class="eyebrow" id="weekEyebrow">DIESE WOCHE</p><h2>Wochenstand</h2></div><span class="week-range" id="weekRange"></span></div>
+            <div class="week-content"><div class="progress-ring" id="weekRing"><span id="weekPercent">0%</span></div><div class="week-numbers"><strong id="weekWorked">0:00</strong><span id="weekTarget">von 0:00 Std.</span><div class="balance-pill" id="weekBalance">± 0:00</div></div><div class="week-bars" id="weekBars" aria-label="Arbeitszeit pro Wochentag"></div></div>
+          </section>
+          <section class="mini-stats" aria-label="Schnellübersicht"><button class="mini-stat vacation" data-go="calendar" type="button"><span class="mini-stat-icon"><svg><use href="#i-sun"></use></svg></span><span><small>Urlaub übrig</small><b id="vacationLeft">0</b></span></button><button class="mini-stat earnings" data-go="reports" type="button"><span class="mini-stat-icon"><svg><use href="#i-wallet"></use></svg></span><span><small>Heute verdient</small><b id="todayEarnings">0,00 €</b></span></button><button class="mini-stat home" data-go="reports" type="button"><span class="mini-stat-icon"><svg><use href="#i-home"></use></svg></span><span><small>Homeoffice</small><b id="homeofficeDays">0</b></span></button><button class="mini-stat commute" data-go="reports" type="button"><span class="mini-stat-icon"><svg><use href="#i-route"></use></svg></span><span><small>Fahrten</small><b id="commuteDays">0</b></span></button></section>
+          <section class="vacation-preview card" aria-label="Nächster Urlaub"><div class="vacation-preview-icon"><svg><use href="#i-sun"></use></svg></div><div class="vacation-preview-copy"><p class="eyebrow">AUSBLICK</p><h2 id="vacationCountdown">Nächster Urlaub</h2><span id="vacationCountdownDetail">Noch keiner eingetragen.</span></div><button class="button quiet-button" id="openVacationHome" type="button">Urlaub eintragen</button></section>
+        </div>
+      </section>
+
+      <section class="view" id="view-calendar">
+        <div class="section-toolbar"><div><p class="eyebrow">ZEITERFASSUNG</p><h2>Kalender</h2></div><div class="calendar-toolbar-actions"><button class="button quiet-button" id="openDayOffCalendar" type="button"><svg><use href="#i-calendar"></use></svg>Freier Tag</button><button class="button quiet-button" id="openVacationCalendar" type="button"><svg><use href="#i-sun"></use></svg>Urlaub</button><div class="period-switcher"><button id="prevMonth" aria-label="Vorheriger Monat" type="button"><svg><use href="#i-left"></use></svg></button><b id="calendarMonth"></b><button id="nextMonth" aria-label="Nächster Monat" type="button"><svg><use href="#i-right"></use></svg></button></div></div></div>
+        <div class="calendar-layout"><section class="card calendar-card"><div class="calendar-weekdays"><span>Mo</span><span>Di</span><span>Mi</span><span>Do</span><span>Fr</span><span>Sa</span><span>So</span></div><div class="calendar-grid" id="calendarGrid"></div></section><aside class="card legend-card"><p class="eyebrow">KÜRZEL</p><h2>Tagestypen</h2><div class="legend-list" id="legendList"></div><p class="subtle">Tippe einen Tag an, um Details zu sehen.</p></aside></div>
+      </section>
+
+      <section class="view" id="view-reports">
+        <div class="section-toolbar"><div><p class="eyebrow">AUSWERTUNG</p><h2>Jahresübersicht</h2></div><div class="year-actions"><select id="reportYear" aria-label="Jahr"></select><a class="button quiet-button" id="csvExport" href="api/export.csv"><svg><use href="#i-download"></use></svg>CSV</a></div></div>
+        <div class="report-cards"><article class="metric-card emphasis"><span>Zeitkonto</span><strong id="reportBalance">± 0:00</strong><small>inklusive Übertrag</small></article><article class="metric-card"><span>Arbeitszeit</span><strong id="reportWorked">0:00</strong><small id="reportTarget">von 0:00 Stunden</small></article><article class="metric-card"><span>Urlaub</span><strong id="reportVacation">0 / 0</strong><small>genommen / verfügbar</small></article><article class="metric-card"><span>Homeoffice</span><strong id="reportHome">0</strong><small>Tage</small></article><article class="metric-card earnings-card"><span>Brutto zugeordnet</span><strong id="reportGross">0,00 €</strong><small>Schätzung aus erfassten Tagen</small></article></div>
+        <div class="report-insights"><section class="card insight-card"><div class="card-heading"><div><p class="eyebrow">RHYTHMUS</p><h2>Ø nach Wochentag</h2></div><span class="subtle">Arbeitszeit</span></div><div class="weekday-chart" id="weekdayChart"></div></section><section class="card insight-card"><div class="card-heading"><div><p class="eyebrow">FORTSCHRITT</p><h2>Deine Erfolge</h2></div><span class="streak-badge"><svg><use href="#i-flame"></use></svg><b id="currentStreak">0</b></span></div><div class="achievement-grid"><div><span>Ziele erreicht</span><strong id="goalsReached">0</strong><small>Tage</small></div><div><span>Trefferquote</span><strong id="goalRate">0 %</strong><small>aller Arbeitstage</small></div><div><span>Beste Serie</span><strong id="bestStreak">0</strong><small>Tage am Stück</small></div></div></section></div>
+        <section class="card report-table-card"><div class="card-heading"><div><p class="eyebrow">MONATE</p><h2>Verlauf</h2></div><span class="subtle">Ist · Soll · Saldo</span></div><div class="month-list" id="monthList"></div></section>
+      </section>
+
+      <section class="view" id="view-settings">
+        <div class="section-toolbar"><div><p class="eyebrow">KONFIGURATION</p><h2>Einstellungen</h2></div></div>
+        <form id="settingsForm" class="settings-layout">
+          <section class="card settings-card">
+            <div class="settings-heading"><span class="settings-icon"><svg><use href="#i-user"></use></svg></span><div><h3>Arbeitsmodell</h3><p>Grundlage für Tagesziel und Zeitkonto</p></div></div>
+            <label class="field"><span>Anzeigename <small>optional</small></span><input id="settingName" autocomplete="name" placeholder="Dein Anzeigename"></label>
+            <div class="field-row"><label class="field"><span>Wochenstunden <small>automatisch</small></span><input id="settingHours" type="number" readonly></label><label class="field"><span>Pausenregel</span><select id="settingAge"><option value="adult">Volljährig</option><option value="minor">Unter 18</option></select></label></div>
+            <label class="field"><span>Zeitkonto berechnen ab</span><input id="settingStartDate" type="date" required></label>
+            <fieldset class="field"><legend>Arbeitszeit pro Tag</legend><div class="daily-target-grid" id="dailyTargetGrid"><label><span>Mo</span><input id="settingDay0" type="time" min="00:00" max="23:59"></label><label><span>Di</span><input id="settingDay1" type="time" min="00:00" max="23:59"></label><label><span>Mi</span><input id="settingDay2" type="time" min="00:00" max="23:59"></label><label><span>Do</span><input id="settingDay3" type="time" min="00:00" max="23:59"></label><label><span>Fr</span><input id="settingDay4" type="time" min="00:00" max="23:59"></label><label><span>Sa</span><input id="settingDay5" type="time" min="00:00" max="23:59"></label><label><span>So</span><input id="settingDay6" type="time" min="00:00" max="23:59"></label></div><small class="field-help">00:00 kennzeichnet einen freien Tag.</small></fieldset>
+          </section>
+
+          <section class="card settings-card live-activity-card">
+            <div class="settings-heading"><span class="settings-icon live"><svg><use href="#i-island"></use></svg></span><div><h3>Live Activity</h3><p>Arbeitszeit auf Sperrbildschirm und Dynamic Island</p></div></div>
+            <label class="switch-row"><span><b>Über Home Assistant aktivieren</b><small>Benötigt Home Assistant 2026.7+, die Companion App und iOS 17.2+.</small></span><input id="settingLiveActivity" type="checkbox" role="switch"></label>
+            <div id="liveActivityFields" class="live-fields disabled"><label class="field"><span>Benachrichtigungs-Aktion</span><input id="settingLiveService" placeholder="mobile_app_mein_iphone" autocomplete="off"><small>In HA unter Entwicklerwerkzeuge → Aktionen nach „notify.mobile_app“ suchen.</small></label><label class="switch-row nested-switch"><span><b>Motivations-Mitteilungen</b><small>Bei 25, 50 und 75 % – abwechslungsreich und optional mit Verdienst.</small></span><input id="settingMilestones" type="checkbox" role="switch"></label><button class="button quiet-button" id="testLiveActivity" type="button"><svg><use href="#i-send"></use></svg>Verbindung testen</button><p class="info-note"><svg><use href="#i-info"></use></svg>Nach dem Arbeitsende wird die Live Activity beendet und du erhältst eine Tageszusammenfassung. Tippe sie an, um Zeitwerk direkt zu öffnen.</p></div><details class="notification-examples"><summary>Beispiele für Motivationsmeldungen</summary><div id="notificationExamples" class="notification-example-list"></div><small>Der Text wechselt. Der Verdienst erscheint nur mit eingetragenem Monatsbrutto.</small></details>
+          </section>
+
+          <section class="card settings-card">
+            <div class="settings-heading"><span class="settings-icon"><svg><use href="#i-sliders"></use></svg></span><div><h3>Jahreswerte</h3><p>Urlaub, Übertrag und Berechnung</p></div></div>
+            <div class="field-row"><label class="field"><span>Urlaubsjahr</span><input id="settingVacationYear" type="number" min="2000" max="2100"></label><label class="field"><span>Urlaubsanspruch im Jahr</span><input id="settingVacation" type="number" min="0" max="366" step="0.5"></label></div>
+            <div class="field-row"><label class="field"><span>Monatsbrutto (€)</span><input id="settingMonthlyGross" type="number" min="0" max="1000000" step="0.01" inputmode="decimal"><small>Monatsbrutto ÷ geplante Arbeitstage im Monat. Die Tagesanzeige steigt bis zu diesem Anteil; Überstunden erhöhen das feste Gehalt nicht automatisch.</small></label><label class="field"><span>Resturlaub Vorjahr</span><input id="settingCarry" type="number" min="0" max="100" step="0.5"></label></div>
+            <label class="field"><span>Zeitkonto Vorjahr in Minuten</span><input id="settingBalance" type="number" min="-100000" max="100000"></label>
+            <label class="switch-row"><span><b>Fehlende Mindestpause abziehen</b><small>Fehlende gesetzliche Pause wird nicht als Arbeitszeit gezählt.</small></span><input id="settingAutoBreak" type="checkbox" role="switch"></label>
+          </section>
+
+          <section class="card settings-card">
+            <div class="settings-heading"><span class="settings-icon"><svg><use href="#i-moon"></use></svg></span><div><h3>Darstellung</h3><p>Hell, dunkel oder automatisch</p></div></div>
+            <fieldset class="theme-field"><legend>Farbschema</legend><div class="theme-options"><label><input name="theme" type="radio" value="system" checked><span>System</span></label><label><input name="theme" type="radio" value="light"><span>Hell</span></label><label><input name="theme" type="radio" value="dark"><span>Dunkel</span></label></div></fieldset>
+            <div class="install-guide"><svg><use href="#i-phone"></use></svg><div><b>Als Web-App installieren</b><p>Im Heimnetz <strong>http://DEINE-HA-IP:18099</strong> in Safari öffnen und „Zum Home-Bildschirm“ wählen.</p></div></div>
+          </section>
+
+          <section class="card settings-card data-card">
+            <div class="settings-heading"><span class="settings-icon"><svg><use href="#i-database"></use></svg></span><div><h3>Daten & Sicherung</h3><p>Exportieren oder wiederherstellen</p></div></div>
+            <div class="data-actions"><a class="button quiet-button" href="api/backup.json"><svg><use href="#i-download"></use></svg>Sicherung</a><label class="button quiet-button file-button"><svg><use href="#i-upload"></use></svg>Einspielen<input id="importFile" type="file" accept="application/json"></label></div>
+            <p class="info-note"><svg><use href="#i-lock"></use></svg>Alle Zeiten liegen lokal im geschützten Datenordner des Add-ons.</p>
+            <details class="advanced-corrections"><summary>Erweiterte Korrekturen</summary><div><p>Nur falls du den heutigen Arbeitstag versehentlich abgeschlossen hast. Die Zeit zwischen Abschluss und Wiederaufnahme zählt als Pause.</p><button class="button quiet-button" id="reopenTimer" type="button" disabled>Abgeschlossenen Arbeitstag wieder öffnen</button><small id="reopenHint">Heute liegt kein abgeschlossener Arbeitstag vor.</small></div><div class="advanced-x-extra"><b>Zusätzliche Stunden für X-Tag</b><p>Nur für einen bereits als X eingetragenen Tag. Der Wert ist die gesamte zusätzliche Zeit über dem Tagesziel und kann erneut korrigiert werden.</p><div class="field-row"><label class="field"><span>Datum</span><input id="xExtraDate" type="date"></label><label class="field"><span>Zusätzlich (HH:MM)</span><input id="xExtraDuration" type="time" min="00:00" max="12:00" step="60" value="00:00"></label></div><button class="button quiet-button" id="saveXExtra" type="button">Zusatzzeit speichern</button></div></details>
+          </section>
+          <div class="settings-save"><span id="settingsHint"></span><button class="button primary-action" type="submit">Einstellungen speichern</button></div>
+        </form>
+      </section>
+    </main>
+  </div>
+
+  <nav class="mobile-nav" aria-label="Mobile Hauptnavigation"><button class="nav-item active" data-view="dashboard" type="button"><svg><use href="#i-clock"></use></svg><span>Heute</span></button><button class="nav-item" data-view="calendar" type="button"><svg><use href="#i-calendar"></use></svg><span>Kalender</span></button><button class="mobile-add" id="mobileAdd" type="button" aria-label="Eintrag hinzufügen"><svg><use href="#i-plus"></use></svg></button><button class="nav-item" data-view="reports" type="button"><svg><use href="#i-chart"></use></svg><span>Auswertung</span></button><button class="nav-item" data-view="settings" type="button"><svg><use href="#i-sliders"></use></svg><span>Mehr</span></button></nav>
+
+  <dialog id="entryDialog" class="entry-dialog">
+    <form id="entryForm" method="dialog">
+      <div class="dialog-head"><div><p class="eyebrow">MANUELLER MODUS</p><h2 id="entryDialogTitle">Arbeitszeit nachtragen</h2></div><button class="dialog-close" value="cancel" aria-label="Schließen" type="button">×</button></div>
+      <input id="entryId" type="hidden"><label class="field"><span>Datum</span><input id="entryDate" type="date" required></label>
+      <fieldset class="type-grid"><legend>Tagestyp</legend><label data-code="B"><input name="entryType" type="radio" value="B" checked><span><b>B</b><small>Büro / Arbeit</small></span></label><label data-code="H"><input name="entryType" type="radio" value="H"><span><b>H</b><small>Homeoffice</small></span></label><label data-code="X"><input name="entryType" type="radio" value="X"><span><b>X</b><small>Ziel erfüllt</small></span></label><label data-code="FT"><input name="entryType" type="radio" value="FT"><span><b>FT</b><small>Frei / Feiertag</small></span></label><label data-code="U"><input name="entryType" type="radio" value="U"><span><b>U</b><small>Urlaub</small></span></label><label data-code="K"><input name="entryType" type="radio" value="K"><span><b>K</b><small>Krank</small></span></label><label data-code="S"><input name="entryType" type="radio" value="S"><span><b>S</b><small>Sonderurlaub</small></span></label><label data-code="F"><input name="entryType" type="radio" value="F"><span><b>F</b><small>Flex-Abbau</small></span></label><label data-code="A"><input name="entryType" type="radio" value="A"><span><b>A</b><small>Überzeit</small></span></label></fieldset>
+      <div id="timedFields"><div class="field-row three"><label class="field"><span>Beginn</span><input id="entryStart" type="time" step="60"></label><label class="field"><span>Ende</span><input id="entryEnd" type="time" step="60"></label><label class="field"><span>Pause <small>HH:MM</small></span><input id="entryBreak" type="time" step="60" min="00:00" max="10:00" value="00:30"></label></div><label class="switch-row compact-switch"><span><b>Fahrt zur Arbeit</b></span><input id="entryCommute" type="checkbox" role="switch"></label></div>
+      <label class="field"><span>Notiz <small>optional</small></span><textarea id="entryNote" rows="2" maxlength="500" placeholder="z. B. Berufsschule oder Kundentermin"></textarea></label>
+      <button class="button quiet-button hidden" id="entryVacationRange" type="button"><svg><use href="#i-calendar"></use></svg>Mehrere Urlaubstage eintragen</button>
+      <div class="dialog-actions"><button class="button danger-button hidden" id="deleteEntry" type="button">Löschen</button><span class="dialog-spacer"></span><button class="button quiet-button" id="cancelEntry" type="button">Abbrechen</button><button class="button primary-action" type="submit">Speichern</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="dayOffDialog" class="entry-dialog day-off-dialog">
+    <form id="dayOffForm" method="dialog">
+      <div class="dialog-head"><div><p class="eyebrow">KALENDER</p><h2>Arbeitsfreien Tag eintragen</h2></div><button class="dialog-close" id="closeDayOff" aria-label="Schließen" type="button">×</button></div>
+      <p class="dialog-intro">Für einen Feiertag oder einen anderen freien Tag. Er verbraucht keinen Urlaub und erzeugt keine Minusstunden.</p>
+      <label class="field"><span>Datum</span><input id="dayOffDate" type="date" required></label>
+      <label class="field"><span>Notiz <small>optional</small></span><textarea id="dayOffNote" rows="2" maxlength="500" placeholder="z. B. Feiertag"></textarea></label>
+      <div class="dialog-actions"><span class="dialog-spacer"></span><button class="button quiet-button" id="cancelDayOff" type="button">Abbrechen</button><button class="button primary-action" type="submit">Freien Tag speichern</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="vacationDialog" class="entry-dialog vacation-dialog">
+    <form id="vacationForm" method="dialog">
+      <div class="dialog-head"><div><p class="eyebrow">URLAUB PLANEN</p><h2>Urlaub als Zeitraum</h2></div><button class="dialog-close" id="closeVacation" aria-label="Schließen" type="button">×</button></div>
+      <p class="dialog-intro">Wähle den Beginn und das Ende des Zeitraums. Bereits eingetragene freie Tage und Feiertage bleiben erhalten und verbrauchen keinen Urlaub.</p>
+      <div class="field-row"><label class="field"><span>Von</span><input id="vacationStart" type="date" required></label><label class="field"><span>Bis</span><input id="vacationEnd" type="date" required></label></div>
+      <div class="vacation-range-preview" id="vacationRangePreview">Wähle einen Zeitraum.</div>
+      <label class="field"><span>Notiz <small>optional</small></span><textarea id="vacationNote" rows="2" maxlength="500" placeholder="z. B. Sommerurlaub"></textarea></label>
+      <div class="dialog-actions"><span class="dialog-spacer"></span><button class="button quiet-button" id="cancelVacation" type="button">Abbrechen</button><button class="button primary-action" type="submit">Urlaub eintragen</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="calendarDayDialog" class="calendar-day-dialog" aria-labelledby="calendarDayTitle">
+    <div class="calendar-day-sheet"><div class="calendar-day-sheet-top"><div><p class="eyebrow">KALENDERTAG</p><h2 id="calendarDayTitle">Tag</h2></div><button class="dialog-close" id="closeCalendarDay" type="button" aria-label="Schließen">×</button></div><div id="calendarDayContent"></div><div class="calendar-day-sheet-actions"><button class="button quiet-button" id="calendarDayPrev" type="button"><svg><use href="#i-left"></use></svg>Vorheriger</button><button class="button primary-action" id="editCalendarDay" type="button">Eintrag bearbeiten</button><button class="button quiet-button" id="calendarDayNext" type="button">Nächster<svg><use href="#i-right"></use></svg></button></div></div>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <svg class="svg-sprite" aria-hidden="true">
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol><symbol id="i-play" viewBox="0 0 24 24"><path d="m9 6 9 6-9 6V6Z"/></symbol><symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 6v12M16 6v12"/></symbol><symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1"/></symbol><symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4Z"/><path d="m13.5 6.5 4 4"/></symbol><symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol><symbol id="i-timer" viewBox="0 0 24 24"><path d="M9 2h6M12 5v3"/><circle cx="12" cy="14" r="7"/><path d="M12 14l3-2"/></symbol><symbol id="i-calendar" viewBox="0 0 24 24"><path d="M7 3v3M17 3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v14H4V6a1 1 0 0 1 1-1Z"/></symbol><symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V10m6 10V4m6 16v-7m4 7H2"/></symbol><symbol id="i-trend" viewBox="0 0 24 24"><path d="m4 15 5-5 4 4 7-8M16 6h4v4"/></symbol><symbol id="i-wallet" viewBox="0 0 24 24"><path d="M4 6h14a2 2 0 0 1 2 2v10H4V6Z"/><path d="M4 6V4h12v2M15 12h5"/></symbol><symbol id="i-home" viewBox="0 0 24 24"><path d="m3 11 9-8 9 8v10h-6v-7H9v7H3V11Z"/></symbol><symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 18h3a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h7"/></symbol><symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol><symbol id="i-flame" viewBox="0 0 24 24"><path d="M12 22c4 0 7-3 7-7 0-3-1.5-6-5-10 0 3-2 5-4 6 0-2-1-4-2-5-2 3-3 6-3 9 0 4 3 7 7 7Z"/></symbol><symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></symbol><symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.6 2.7 8 7 10 4.3-2 7-5.4 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-5"/></symbol><symbol id="i-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol><symbol id="i-right" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol><symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 20h16"/></symbol><symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4m-5 5 5-5 5 5M4 20h16"/></symbol><symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c.7-4 3.3-6 8-6s7.3 2 8 6"/></symbol><symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 15.2A8.5 8.5 0 0 1 8.8 4 8.5 8.5 0 1 0 20 15.2Z"/></symbol><symbol id="i-phone" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M10 5h4M11 19h2"/></symbol><symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7"/></symbol><symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol><symbol id="i-island" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="7"/><path d="M9 12h6"/></symbol><symbol id="i-send" viewBox="0 0 24 24"><path d="m3 11 18-8-8 18-2-8-8-2Z"/><path d="m11 13 4-4"/></symbol><symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></symbol><symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 20h20L12 3Z"/><path d="M12 9v4M12 17h.01"/></symbol>
+  </svg>
+  <script src="app.js?v=4.3.1"></script>
+</body>
+</html>
