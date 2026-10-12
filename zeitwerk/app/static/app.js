@@ -44,7 +44,7 @@
     const dark = safePreference === "dark" || (safePreference === "system" && themeMedia.matches);
     document.documentElement.dataset.theme = dark ? "dark" : "light";
     document.documentElement.dataset.themePreference = safePreference;
-    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#14252b" : "#f2f7f5");
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#101616" : "#f6f7f5");
     if (remember) localStorage.setItem("zeitwerk-theme", safePreference);
   }
 
@@ -216,7 +216,7 @@
   function renderHeader() {
     const now = new Date();
     const formatted = new Intl.DateTimeFormat("de-DE", { weekday: "long", day: "2-digit", month: "long" }).format(now);
-    $("#todayDate").textContent = formatted.toUpperCase();
+    $("#todayDate").textContent = formatted;
     const hour = now.getHours();
     const greeting = hour < 11 ? "Guten Morgen" : hour < 17 ? "Guten Tag" : "Guten Abend";
     const name = (state.settings.display_name || "").trim();
@@ -251,7 +251,7 @@
     $("#weekRing").style.setProperty("--progress", `${percent * 3.6}deg`);
     $("#weekBalance").textContent = formatSigned(balance);
     $("#weekBalance").classList.toggle("negative", balance < 0);
-    $("#weekEyebrow").textContent = selectedIsToday ? "DIESE WOCHE" : "WOCHE DES TAGES";
+    $("#weekEyebrow").textContent = selectedIsToday ? "Diese Woche" : "Woche des Tages";
 
     const names = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
     $("#weekBars").innerHTML = names.map((name, index) => {
