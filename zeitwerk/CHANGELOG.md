@@ -1,5 +1,12 @@
 # Änderungsverlauf
 
+## 4.4.0
+
+- Live Activity wird beim Arbeitsende vor der separaten Abschlussmeldung geschlossen; verzögerte Löschversuche fangen verspätete iPhone-Pushes ab
+- Mitteilungen in den Einstellungen getrennt steuerbar: Motivation, erreichtes Tagesziel und Feierabend-Zusammenfassung
+- Motivation wahlweise mit Spruch und Verdienst, nur mit Spruch oder nur als Prozentanzeige
+- Feierabend-Mitteilung zeigt kurz den Abstand zum Tagessoll und den Saldo des Zeitkontos
+
 ## 4.3.2
 
 - einheitliches Zeitwerk-Icon mit gut lesbarem Z und Fortschrittsring für Home-Assistant-App-Store, Web-App, iPhone-Homescreen und Browser ergänzt

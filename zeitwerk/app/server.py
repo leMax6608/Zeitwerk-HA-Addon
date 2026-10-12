@@ -47,6 +47,9 @@ DEFAULT_SETTINGS = {
     "live_activity_enabled": False,
     "live_activity_service": "",
     "milestone_notifications_enabled": False,
+    "milestone_notification_style": "saying_money",
+    "goal_notification_enabled": True,
+    "end_summary_enabled": True,
     "hourly_gross_eur": 0,
     "monthly_gross_eur": 0,
 }
@@ -129,43 +132,87 @@ def call_home_assistant_notify(service: str, payload: dict) -> dict:
         return {"ok": False, "message": "Home Assistant ist für die Live Activity nicht erreichbar"}
 
 
+def clear_live_activity(service: str) -> dict:
+    return call_home_assistant_notify(service, {
+        "message": "clear_notification",
+        "data": {"tag": LIVE_ACTIVITY_TAG},
+    })
+
+
+def retry_live_activity_clear(service: str) -> None:
+    # A successful HA API response only means the command entered the push
+    # queue. A later clear helps when iOS receives the first one out of order.
+    try:
+        if not active_entry(get_settings()):
+            clear_live_activity(service)
+    except Exception as exc:
+        print(f"Zeitwerk Live Activity cleanup failed: {exc}", flush=True)
+
+
+def schedule_live_activity_clear_retry(service: str) -> None:
+    for delay in (10, 45):
+        timer = threading.Timer(delay, retry_live_activity_clear, args=(service,))
+        timer.daemon = True
+        timer.start()
+
+
+def signed_duration(minutes: int | float) -> str:
+    amount = round(float(minutes or 0))
+    sign = "+" if amount >= 0 else "−"
+    return f"{sign}{format_duration(abs(amount))}"
+
+
+def end_summary_payload(settings: dict, item: dict) -> dict:
+    work_date = str(item.get("work_date") or date.today().isoformat())
+    start_time = str(item.get("start_time") or "")[:5] or "–"
+    end_time = str(item.get("end_time") or "")[:5] or "–"
+    target = daily_target(settings, work_date)
+    day_delta = int(item.get("account_minutes", 0) or 0) - target
+    year_start = f"{work_date[:4]}-01-01"
+    entries = list_entries(year_start, work_date, settings)
+    balance = summary_for(entries, settings, year_start, work_date)["balance_minutes"]
+    if work_date[:4] == str(date.today().year):
+        balance += int(settings.get("previous_balance_minutes", 0) or 0)
+    comparison = f"Heute {signed_duration(day_delta)} zum Soll · Konto {signed_duration(balance)}"
+    if has_gross_setting(settings):
+        earned = estimated_gross(settings, work_date, item.get("worked_minutes", 0))
+        comparison += f" · {format_currency_eur(earned)} brutto"
+    return {
+        "title": "Zeitwerk · Feierabend",
+        "message": comparison,
+        "data": {
+            "tag": f"zeitwerk_summary_{re.sub(r'[^0-9]', '', work_date)}",
+            "subtitle": f"{start_time}–{end_time} · {summary_duration(item.get('worked_minutes', 0))} Arbeit · {summary_duration(item.get('recorded_break_minutes', 0))} Pause",
+            "notification_icon": "mdi:check-bold",
+            "notification_icon_color": "#FFFFFF",
+            "color": NOTIFICATION_ACCENT,
+            "url": zeitwerk_app_url(),
+        },
+    }
+
+
 def sync_live_activity(settings: dict, phase: str, entry: dict | None = None) -> dict:
-    if not settings.get("live_activity_enabled"):
-        return {"ok": True, "enabled": False}
     service = settings.get("live_activity_service", "")
     if phase == "stop":
-        item = entry or {}
-        start_time = str(item.get("start_time") or "")[:5] or "–"
-        end_time = str(item.get("end_time") or "")[:5] or "–"
-        worked = summary_duration(item.get("worked_minutes", 0))
-        paused_for = summary_duration(item.get("recorded_break_minutes", 0))
-        earned_amount = estimated_gross(settings, item.get("work_date"), item.get("worked_minutes", 0))
-        earned = f" · {format_currency_eur(earned_amount)} brutto verdient" if has_gross_setting(settings) else ""
-        work_date = re.sub(r"[^0-9]", "", str(item.get("work_date") or date.today().isoformat()))
-        summary_result = call_home_assistant_notify(service, {
-            "title": "Zeitwerk",
-            "message": f"Arbeit beendet{earned} · {worked} gearbeitet · {paused_for} Pause",
-            "data": {
-                "tag": f"zeitwerk_summary_{work_date}",
-                "subtitle": f"{start_time}–{end_time} Uhr",
-                "notification_icon": "mdi:check-bold",
-                "notification_icon_color": "#FFFFFF",
-                "color": NOTIFICATION_ACCENT,
-                "url": zeitwerk_app_url(),
-            },
-        })
-        # The clear must be the final command. Sending the summary immediately
-        # after an earlier clear can otherwise overtake it in Apple's push queue.
-        time.sleep(0.35)
-        clear_result = call_home_assistant_notify(service, {
-            "message": "clear_notification",
-            "data": {"tag": LIVE_ACTIVITY_TAG},
-        })
+        if not service:
+            return {"ok": True, "configured": False}
+        clear_result = {"ok": True, "enabled": False}
+        if settings.get("live_activity_enabled"):
+            clear_result = clear_live_activity(service)
+            schedule_live_activity_clear_retry(service)
+        summary_result = {"ok": True, "enabled": False}
+        if settings.get("end_summary_enabled", True):
+            if settings.get("live_activity_enabled"):
+                time.sleep(0.6)
+            summary_result = call_home_assistant_notify(service, end_summary_payload(settings, entry or {}))
         return {
-            "ok": bool(summary_result.get("ok")),
+            "ok": bool(clear_result.get("ok") and summary_result.get("ok")),
             "cleared": clear_result,
             "summary": summary_result,
         }
+
+    if not settings.get("live_activity_enabled"):
+        return {"ok": True, "enabled": False}
 
     paused = phase == "pause"
     item = entry or {}
@@ -734,42 +781,67 @@ def next_vacation(settings: dict) -> dict | None:
     return {"start_date": first.isoformat(), "end_date": last.isoformat(), "workdays": count, "days_until": (first - today).days}
 
 
-MILESTONE_MESSAGES = {
-    25: (
-        "Der Anfang ist gemacht – ein Viertel deines Tagesziels ist geschafft.",
-        "25 % erledigt. Du bist gut im Rhythmus.",
-        "Erstes Etappenziel erreicht – weiter so.",
-    ),
-    50: (
-        "Halbzeit – die Hälfte deines Tagesziels liegt hinter dir.",
-        "50 % geschafft. Ab jetzt geht es Richtung Feierabend.",
-        "Starke Halbzeit – du bist genau auf Kurs.",
-    ),
-    75: (
-        "Drei Viertel geschafft – der Endspurt beginnt.",
-        "75 % erledigt. Dein Tagesziel ist schon in Sicht.",
-        "Nur noch das letzte Viertel – stark geblieben.",
-    ),
+MOTIVATION_SAYINGS = {
+    25: ("Der Anfang ist gemacht – weiter so!", "Du bist gut im Rhythmus.", "Ein guter Start zählt."),
+    50: ("Halbzeit – bleib dran!", "Du bist genau auf Kurs.", "Die zweite Hälfte kann kommen."),
+    75: ("Der Endspurt beginnt!", "Das Ziel ist schon in Sicht.", "Stark geblieben – fast geschafft."),
 }
 
 
-def check_milestones() -> None:
-    settings = get_settings()
-    if not settings.get("live_activity_enabled") or not settings.get("milestone_notifications_enabled"):
+def progress_notification_payload(settings: dict, item: dict, milestone: int) -> dict:
+    if milestone == 100:
+        return {
+            "title": "Zeitwerk · Tagesziel erreicht",
+            "message": f"Dein Soll von {format_duration(daily_target(settings, item['work_date']))} Std. ist geschafft. Ab jetzt sammelst du Pluszeit.",
+            "data": {
+                "tag": f"zeitwerk_goal_{item['id']}",
+                "notification_icon": "mdi:check-circle-outline",
+                "notification_icon_color": "#FFFFFF",
+                "color": NOTIFICATION_ACCENT,
+                "url": zeitwerk_app_url(),
+            },
+        }
+    style = settings.get("milestone_notification_style", "saying_money")
+    saying = MOTIVATION_SAYINGS[milestone][(int(item["id"]) + milestone) % 3]
+    if style == "percent":
+        title, message = "Zeitwerk · Fortschritt", f"{milestone} % deines Tagesziels geschafft."
+    elif style == "saying":
+        title, message = "Zeitwerk · Motivation", saying
+    else:
+        title, message = f"Zeitwerk · {milestone} %", saying
+        if has_gross_setting(settings):
+            earned = estimated_gross(settings, item["work_date"], item.get("worked_minutes", 0))
+            message += f" Heute verdient: ca. {format_currency_eur(earned)} brutto."
+    return {
+        "title": title,
+        "message": message,
+        "data": {
+            "tag": f"zeitwerk_milestone_{item['id']}_{milestone}",
+            "notification_icon": "mdi:progress-clock",
+            "notification_icon_color": "#FFFFFF",
+            "color": NOTIFICATION_ACCENT,
+            "url": zeitwerk_app_url(),
+        },
+    }
+
+
+def send_progress_notifications(settings: dict, item: dict, *, goal_only: bool = False) -> None:
+    service = settings.get("live_activity_service", "")
+    if not service:
         return
-    item = active_entry(settings)
-    if not item:
+    milestones = [] if goal_only or not settings.get("milestone_notifications_enabled") else [25, 50, 75]
+    if settings.get("goal_notification_enabled", True):
+        milestones.append(100)
+    if not milestones:
         return
     target = daily_target(settings, item.get("work_date"))
     if target <= 0:
         return
-    progress = float(item.get("net_work_seconds", 0) or 0) / (target * 60)
-    service = settings.get("live_activity_service", "")
-    reached = [milestone for milestone in (25, 50, 75) if progress >= milestone / 100]
+    progress = float(item.get("worked_minutes", 0) or 0) / target
+    reached = [milestone for milestone in milestones if progress >= milestone / 100]
     if not reached:
         return
-    # If notifications were enabled late in the day, don't send three old
-    # milestones in a burst. Mark earlier stages and celebrate only the latest.
+    # Enabling notifications late should not deliver every missed stage at once.
     for skipped in reached[:-1]:
         with DB_LOCK, db() as con:
             con.execute(
@@ -784,27 +856,20 @@ def check_milestones() -> None:
         ).rowcount
     if not inserted:
         return
-    variant = MILESTONE_MESSAGES[milestone][(int(item["id"]) + milestone) % 3]
-    if has_gross_setting(settings):
-        earned = estimated_gross(settings, item["work_date"], item.get("worked_minutes", 0))
-        variant += f" Heute bisher ca. {format_currency_eur(earned)} brutto."
-    result = call_home_assistant_notify(service, {
-        "title": f"Zeitwerk · {milestone} %",
-        "message": variant,
-        "data": {
-            "tag": f"zeitwerk_milestone_{item['id']}_{milestone}",
-            "notification_icon": "mdi:progress-clock",
-            "notification_icon_color": "#FFFFFF",
-            "color": NOTIFICATION_ACCENT,
-            "url": zeitwerk_app_url(),
-        },
-    })
+    result = call_home_assistant_notify(service, progress_notification_payload(settings, item, milestone))
     if not result.get("ok"):
         with DB_LOCK, db() as con:
             con.execute(
                 "DELETE FROM milestone_notifications WHERE entry_id=? AND milestone=?",
                 (item["id"], milestone),
             )
+
+
+def check_milestones() -> None:
+    settings = get_settings()
+    item = active_entry(settings)
+    if item:
+        send_progress_notifications(settings, item)
 
 
 def milestone_worker() -> None:
@@ -850,7 +915,7 @@ def summary_for(entries: list[dict], settings: dict, start_date: str, end_date: 
 
 
 class Handler(SimpleHTTPRequestHandler):
-    server_version = "Zeitwerk/4.3.2"
+    server_version = "Zeitwerk/4.4.0"
     extensions_map = {
         **SimpleHTTPRequestHandler.extensions_map,
         ".webmanifest": "application/manifest+json",
@@ -1069,6 +1134,9 @@ class Handler(SimpleHTTPRequestHandler):
             raise ValueError("Unbekannte Darstellung")
         if "live_activity_service" in updates:
             updates["live_activity_service"] = normalized_notify_service(updates["live_activity_service"])
+        if "milestone_notification_style" in updates and updates["milestone_notification_style"] not in {"saying_money", "saying", "percent"}:
+            raise ValueError("Unbekannter Stil für Motivationsmeldungen")
+        previous_settings = get_settings()
         with DB_LOCK, db() as con:
             for key, value in updates.items():
                 con.execute(
@@ -1076,13 +1144,15 @@ class Handler(SimpleHTTPRequestHandler):
                     (key, json.dumps(value, ensure_ascii=False)),
                 )
         create_safety_backup()
+        if previous_settings.get("live_activity_enabled") and updates.get("live_activity_enabled") is False:
+            clear_live_activity(previous_settings.get("live_activity_service", ""))
         self.json_response({"ok": True, "settings": get_settings()})
 
     def test_live_activity(self) -> None:
         settings = get_settings()
         result = call_home_assistant_notify(settings.get("live_activity_service", ""), {
             "title": "Zeitwerk",
-            "message": "Verbindung erfolgreich – Live Activity ist bereit.",
+            "message": "Verbindung erfolgreich – Mitteilungen sind bereit.",
             "data": {
                 "tag": "zeitwerk_test",
                 "notification_icon": "mdi:briefcase-check-outline",
@@ -1309,6 +1379,8 @@ class Handler(SimpleHTTPRequestHandler):
             row = con.execute("SELECT * FROM entries WHERE id=?", (active["id"],)).fetchone()
         create_safety_backup()
         serialized = serialize_entry(row, settings)
+        if action == "stop":
+            send_progress_notifications(settings, serialized, goal_only=True)
         live_activity = sync_live_activity(settings, action, serialized)
         self.json_response({"ok": True, "entry": serialized, "live_activity": live_activity})
 
@@ -1364,6 +1436,10 @@ class ZeitwerkServer(ThreadingHTTPServer):
 
 if __name__ == "__main__":
     init_db()
+    startup_settings = get_settings()
+    if startup_settings.get("live_activity_service"):
+        # Also remove an orphaned activity left by a previous add-on crash.
+        schedule_live_activity_clear_retry(startup_settings["live_activity_service"])
     threading.Thread(target=milestone_worker, name="zeitwerk-milestones", daemon=True).start()
     os.chdir(STATIC_DIR)
     server = ZeitwerkServer(("0.0.0.0", PORT), Handler)

@@ -638,8 +638,10 @@
     $("#settingAutoBreak").checked = Boolean(s.auto_break_deduction);
     $("#settingLiveActivity").checked = Boolean(s.live_activity_enabled);
     $("#settingMilestones").checked = Boolean(s.milestone_notifications_enabled);
+    $("#settingMilestoneStyle").value = s.milestone_notification_style || "saying_money";
+    $("#settingGoalNotification").checked = s.goal_notification_enabled !== false;
+    $("#settingEndSummary").checked = s.end_summary_enabled !== false;
     $("#settingLiveService").value = s.live_activity_service || "";
-    $("#liveActivityFields").classList.toggle("disabled", !s.live_activity_enabled);
     const theme = ["system", "light", "dark"].includes(s.theme) ? s.theme : "system";
     const themeInput = $(`input[name="theme"][value="${theme}"]`);
     if (themeInput) themeInput.checked = true;
@@ -659,15 +661,21 @@
     const monthly = Math.max(0, Number($("#settingMonthlyGross").value) || 0);
     const targets = Array.from({ length: 7 }, (_, index) => minutesFromTime($(`#settingDay${index}`).value));
     const target = targets[weekdayIndex(new Date())] || targets.find(value => value > 0) || 480;
+    const style = $("#settingMilestoneStyle").value;
     const examples = [
-      [25, "Der Anfang ist gemacht – ein Viertel deines Tagesziels ist geschafft."],
-      [50, "Halbzeit – die Hälfte deines Tagesziels liegt hinter dir."],
-      [75, "Drei Viertel geschafft – der Endspurt beginnt."],
+      [25, "Der Anfang ist gemacht – weiter so!"],
+      [50, "Halbzeit – bleib dran!"],
+      [75, "Der Endspurt beginnt!"],
     ];
-    $("#notificationExamples").innerHTML = examples.map(([percent, message]) => {
-      const earnings = monthly > 0 ? ` Heute bisher ca. ${formatMoney(grossForMinutes(new Date(), target * percent / 100, monthly))} brutto.` : "";
-      return `<div class="notification-example"><span class="notification-example-icon"><svg aria-hidden="true"><use href="#i-timer"></use></svg></span><span><b>Zeitwerk · ${percent} %</b><small>${escapeHTML(message + earnings)}</small></span></div>`;
-    }).join("");
+    const preview = examples.map(([percent, saying]) => {
+      const earnings = monthly > 0 ? ` Heute verdient: ca. ${formatMoney(grossForMinutes(new Date(), target * percent / 100, monthly))} brutto.` : "";
+      const title = style === "percent" ? "Zeitwerk · Fortschritt" : style === "saying" ? "Zeitwerk · Motivation" : `Zeitwerk · ${percent} %`;
+      const message = style === "percent" ? `${percent} % deines Tagesziels geschafft.` : style === "saying" ? saying : saying + earnings;
+      return `<div class="notification-example"><span class="notification-example-icon"><svg aria-hidden="true"><use href="#i-timer"></use></svg></span><span><b>${escapeHTML(title)}</b><small>${escapeHTML(message)}</small></span></div>`;
+    });
+    preview.push(`<div class="notification-example"><span class="notification-example-icon"><svg aria-hidden="true"><use href="#i-shield"></use></svg></span><span><b>Zeitwerk · Tagesziel erreicht</b><small>Dein Soll von ${escapeHTML(formatDuration(target))} Std. ist geschafft. Ab jetzt sammelst du Pluszeit.</small></span></div>`);
+    preview.push(`<div class="notification-example"><span class="notification-example-icon"><svg aria-hidden="true"><use href="#i-sun"></use></svg></span><span><b>Zeitwerk · Feierabend</b><small>Beispiel: Heute +00:30 zum Soll · Konto −01:15${monthly > 0 ? ` · ${escapeHTML(formatMoney(grossForMinutes(new Date(), target, monthly)))} brutto` : ""}</small></span></div>`);
+    $("#notificationExamples").innerHTML = preview.join("");
   }
 
   function setView(name, { scroll = true } = {}) {
@@ -892,6 +900,9 @@
       live_activity_enabled: $("#settingLiveActivity").checked,
       live_activity_service: $("#settingLiveService").value.trim(),
       milestone_notifications_enabled: $("#settingMilestones").checked,
+      milestone_notification_style: $("#settingMilestoneStyle").value,
+      goal_notification_enabled: $("#settingGoalNotification").checked,
+      end_summary_enabled: $("#settingEndSummary").checked,
     };
     try {
       await api("api/settings", { method: "POST", body: JSON.stringify(payload) });
@@ -921,11 +932,9 @@
     try {
       await api("api/settings", {
         method: "POST",
-        body: JSON.stringify({ live_activity_service: service, live_activity_enabled: true }),
+        body: JSON.stringify({ live_activity_service: service }),
       });
       await api("api/live-activity/test", { method: "POST", body: "{}" });
-      $("#settingLiveActivity").checked = true;
-      $("#liveActivityFields").classList.remove("disabled");
       toast("Test an dein iPhone gesendet");
     } catch (error) { toast(error.message, true); }
   }
@@ -983,9 +992,7 @@
     $(".dialog-close").addEventListener("click", () => { state.entryReturnView = null; $("#entryDialog").close(); });
     $("#deleteEntry").addEventListener("click", deleteCurrentEntry);
     $("#settingsForm").addEventListener("submit", saveSettings);
-    $("#settingLiveActivity").addEventListener("change", event => {
-      $("#liveActivityFields").classList.toggle("disabled", !event.target.checked);
-    });
+    $("#settingMilestoneStyle").addEventListener("change", renderNotificationExamples);
     $$("#dailyTargetGrid input").forEach(input => input.addEventListener("input", () => {
       const total = Array.from({ length: 7 }, (_, index) => minutesFromTime($(`#settingDay${index}`).value)).reduce((sum, value) => sum + value, 0);
       $("#settingHours").value = (total / 60).toFixed(2).replace(/\.00$/, "");

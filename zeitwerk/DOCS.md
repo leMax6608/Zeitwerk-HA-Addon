@@ -60,12 +60,12 @@ Die Berechnung ist eine Orientierungshilfe, keine Rechtsberatung. Betriebliche, 
 Optional zeigt Zeitwerk die laufende Arbeit über die **Home-Assistant-Companion-App** auf Sperrbildschirm, Dynamic Island und Apple Watch. Dafür werden Home Assistant Core 2026.7 oder neuer, iOS 17.2 oder neuer und erlaubte Mitteilungen für die Companion-App benötigt.
 
 1. Suche in Home Assistant unter **Entwicklerwerkzeuge → Aktionen** nach deiner Aktion `notify.mobile_app_...`.
-2. Trage den Teil ab `mobile_app_...` unter **Zeitwerk → Einstellungen → Live Activity** ein.
-3. Aktiviere die Funktion, wähle **Verbindung testen** und erlaube die Live Activity auf dem iPhone.
+2. Trage den Teil ab `mobile_app_...` unter **Zeitwerk → Einstellungen → Mitteilungen** ein.
+3. Wähle **Testmitteilung senden**, aktiviere bei Bedarf separat die **Live Activity** und erlaube sie auf dem iPhone.
 
 Während der Arbeit läuft die geleistete Nettoarbeitszeit als Timer. In einer Pause zeigt der Timer die **gesamte** heute erfasste Pausenzeit an, nicht nur die aktuelle Pause. Die normale iPhone-Ansicht nennt die voraussichtliche frühestmögliche Endzeit anhand offener Nettoarbeitszeit und noch benötigter Mindestpause. Bei Zustandswechseln wird sie neu berechnet; zusätzliche Pausen verschieben sie. Die Apple-Watch-Ansicht erhält ebenfalls einen laufenden Chronometer.
 
-Bei 25, 50 und 75 Prozent des Tagesziels können optionale Motivationsmitteilungen erscheinen. Unter **Einstellungen → Live Activity → Beispiele für Motivationsmeldungen** siehst du Beispiele. Mit eingetragenem Monatsbrutto kann auch der geschätzte Verdienst genannt werden. Nach dem Arbeitsende schließt Zeitwerk die Live Activity und sendet eine Push-Zusammenfassung mit Beginn, Ende, Arbeits- und Pausenzeit sowie – falls eingerichtet – geschätztem Bruttoverdienst.
+Unter **Einstellungen → Mitteilungen** kannst du unabhängig von der Live Activity drei Arten von Push-Nachrichten einstellen: Motivation bei 25, 50 und 75 Prozent des Tagesziels (Spruch mit Verdienst, nur Spruch oder nur Prozent), einmalig beim erreichten Tagesziel und eine kurze Feierabend-Zusammenfassung. Letztere zeigt den Abstand zum Tagessoll und den Saldo des Zeitkontos; mit eingetragenem Monatsbrutto auch den geschätzten Tagesverdienst. Eine Vorschau steht direkt im Menü. Beim Arbeitsende sendet Zeitwerk zuerst den Befehl zum Schließen der Live Activity und danach gegebenenfalls die separate Zusammenfassung. Wegen der iPhone-Push-Zustellung wird das Schließen verzögert wiederholt, solange kein neuer Timer läuft.
 
 Ein Tipp auf die Live Activity öffnet Zeitwerk im Home-Assistant-Ingress. Die von Home Assistant bereitgestellte Vorlage erlaubt keine eigenen Pause- oder Stopp-Tasten und nur einen live laufenden Chronometer. Für frei gestaltete interaktive Ansichten wäre eine eigene native iOS-App nötig. Die Zeiterfassung selbst funktioniert auch ohne zugestellte Benachrichtigungen.
 

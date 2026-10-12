@@ -54,6 +54,81 @@ class ZeitwerkWorkflowTests(unittest.TestCase):
                 with patch.object(self.module, "urlopen", return_value=response):
                     self.assertEqual(self.module.zeitwerk_app_url(), expected)
 
+    def test_live_activity_is_cleared_before_end_summary(self):
+        settings = {**self.module.DEFAULT_SETTINGS, "live_activity_enabled": True,
+                    "live_activity_service": "mobile_app_test", "end_summary_enabled": True}
+        sent = []
+        with patch.object(self.module, "call_home_assistant_notify", side_effect=lambda service, payload: sent.append(payload) or {"ok": True}), \
+             patch.object(self.module, "schedule_live_activity_clear_retry") as retry, \
+             patch.object(self.module, "end_summary_payload", return_value={"title": "Feierabend", "message": "Fertig"}), \
+             patch.object(self.module.time, "sleep"):
+            result = self.module.sync_live_activity(settings, "stop", {})
+        self.assertTrue(result["ok"])
+        self.assertEqual(sent[0], {"message": "clear_notification", "data": {"tag": self.module.LIVE_ACTIVITY_TAG}})
+        self.assertEqual(sent[1]["title"], "Feierabend")
+        retry.assert_called_once_with("mobile_app_test")
+
+    def test_delayed_live_activity_clear_skips_a_reopened_timer(self):
+        with patch.object(self.module, "active_entry", return_value={"id": 1}), \
+             patch.object(self.module, "call_home_assistant_notify") as notify:
+            self.module.retry_live_activity_clear("mobile_app_test")
+        notify.assert_not_called()
+
+    def test_goal_notification_is_independent_and_sent_only_once(self):
+        future_monday = date.today() + timedelta(days=56 - date.today().weekday())
+        stamp = datetime.now().isoformat(timespec="seconds")
+        with self.module.DB_LOCK, self.module.db() as con:
+            cur = con.execute(
+                """INSERT INTO entries(work_date,type,start_time,end_time,created_at,updated_at)
+                VALUES(?,'B','08:00','16:00',?,?)""",
+                (future_monday.isoformat(), stamp, stamp),
+            )
+            entry_id = cur.lastrowid
+        settings = {**self.module.DEFAULT_SETTINGS, "live_activity_enabled": False,
+                    "live_activity_service": "mobile_app_test", "milestone_notifications_enabled": False,
+                    "goal_notification_enabled": True}
+        item = {"id": entry_id, "work_date": future_monday.isoformat(), "worked_minutes": 480}
+        try:
+            with patch.object(self.module, "call_home_assistant_notify", return_value={"ok": True}) as notify:
+                self.module.send_progress_notifications(settings, item)
+                self.module.send_progress_notifications(settings, item)
+            self.assertEqual(notify.call_count, 1)
+            self.assertIn("Tagesziel erreicht", notify.call_args.args[1]["title"])
+        finally:
+            with self.module.DB_LOCK, self.module.db() as con:
+                con.execute("DELETE FROM entries WHERE id=?", (entry_id,))
+
+    def test_notification_styles_and_goal_message(self):
+        item = {"id": 17, "work_date": date.today().isoformat(), "worked_minutes": 240}
+        settings = {**self.module.DEFAULT_SETTINGS, "monthly_gross_eur": 3000}
+        settings["milestone_notification_style"] = "percent"
+        percent = self.module.progress_notification_payload(settings, item, 50)
+        self.assertIn("50 %", percent["message"])
+        self.assertNotIn("€", percent["message"])
+        settings["milestone_notification_style"] = "saying"
+        saying = self.module.progress_notification_payload(settings, item, 50)
+        self.assertNotIn("50 %", saying["title"] + saying["message"])
+        self.assertNotIn("€", saying["message"])
+        settings["milestone_notification_style"] = "saying_money"
+        earned = self.module.progress_notification_payload(settings, item, 50)
+        self.assertIn("€", earned["message"])
+        goal = self.module.progress_notification_payload(settings, item, 100)
+        self.assertIn("Tagesziel erreicht", goal["title"])
+
+    def test_end_summary_compares_day_and_total_balance(self):
+        today = date.today().isoformat()
+        target = self.module.daily_target(self.module.DEFAULT_SETTINGS, today)
+        item = {"work_date": today, "start_time": "08:00:00", "end_time": "17:00:00",
+                "worked_minutes": target + 30, "account_minutes": target + 30,
+                "recorded_break_minutes": 30}
+        settings = {**self.module.DEFAULT_SETTINGS, "previous_balance_minutes": -15}
+        with patch.object(self.module, "list_entries", return_value=[item]), \
+             patch.object(self.module, "summary_for", return_value={"balance_minutes": 30}):
+            payload = self.module.end_summary_payload(settings, item)
+        self.assertIn("Heute +00:30 zum Soll", payload["message"])
+        self.assertIn("Konto +00:15", payload["message"])
+        self.assertIn("08:00–17:00", payload["data"]["subtitle"])
+
     def test_finalize_once_and_reopen_only_by_explicit_route(self):
         started = self.request("api/timer/start", {"type": "B"})
         self.assertTrue(started["entry"]["is_running"])

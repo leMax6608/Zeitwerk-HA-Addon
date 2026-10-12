@@ -16,6 +16,7 @@ Zeitwerk läuft auf deinem Home-Assistant-Gerät. Deine Zeiten bleiben im persis
 - **Den Überblick behalten:** Tagesansicht, Kalender, individuelle Tagesziele, Zeitkonto und Auswertungen.
 - **Freie Tage planen:** Urlaub für mehrere Tage eintragen; Feiertage und andere arbeitsfreie Tage verbrauchen keinen Urlaub.
 - **Auf dem iPhone nutzen:** als Web-App im Heimnetz und optional mit Live Activity über die Home-Assistant-Companion-App.
+- **Mitteilungen nach Wunsch:** Motivation, erreichtes Tagesziel und Feierabend-Bilanz getrennt einstellen.
 - **Daten sichern:** JSON-Backup zum Wiederherstellen und CSV-Export für Tabellenprogramme.
 
 ## Installation
