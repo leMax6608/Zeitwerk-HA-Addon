@@ -1,8 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <defs><linearGradient id="g" x1="80" y1="52" x2="430" y2="472" gradientUnits="userSpaceOnUse"><stop stop-color="#122c63"/><stop offset="1" stop-color="#071126"/></linearGradient></defs>
-  <rect width="512" height="512" rx="116" fill="url(#g)"/>
-  <circle cx="256" cy="256" r="153" fill="none" stroke="#20cbb9" stroke-width="28" stroke-dasharray="760 201" stroke-linecap="round" transform="rotate(-36 256 256)"/>
-  <circle cx="256" cy="256" r="18" fill="#fff"/>
-  <path d="M256 256V157M256 256l75 44" fill="none" stroke="#fff" stroke-width="27" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="377" cy="159" r="19" fill="#20cbb9"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Zeitwerk Icon">
+  <defs>
+    <linearGradient id="background" x1="64" y1="42" x2="452" y2="474" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#234047"/>
+      <stop offset="1" stop-color="#10242B"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#background)"/>
+  <circle cx="256" cy="256" r="151" fill="none" stroke="#55CCAD" stroke-width="25" stroke-linecap="round" stroke-dasharray="802 147" transform="rotate(-128 256 256)"/>
+  <path d="M192 202h128L192 310h128" fill="none" stroke="#F4FAF7" stroke-width="31" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

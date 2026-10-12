@@ -1,5 +1,11 @@
 # Änderungsverlauf
 
+## 4.3.2
+
+- einheitliches Zeitwerk-Icon mit gut lesbarem Z und Fortschrittsring für Home-Assistant-App-Store, Web-App, iPhone-Homescreen und Browser ergänzt
+- passende Wortmarke für die Home-Assistant-App-Detailansicht hinzugefügt
+- Kopfzeile verwendet nun dasselbe Icon wie die installierte Web-App
+
 ## 4.3.1
 
 - öffentliche Repository-Struktur für Home Assistant eingerichtet

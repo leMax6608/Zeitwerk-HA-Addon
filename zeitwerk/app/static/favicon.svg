@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="16" fill="#0b1739"/>
-  <circle cx="32" cy="32" r="20" fill="none" stroke="#2bd4c3" stroke-width="5" stroke-dasharray="82 44" stroke-linecap="round"/>
-  <path d="M32 19v14l10 6" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Zeitwerk">
+  <rect width="64" height="64" rx="15" fill="#18343A"/>
+  <circle cx="32" cy="32" r="20" fill="none" stroke="#55CCAD" stroke-width="4" stroke-linecap="round" stroke-dasharray="105 21" transform="rotate(-128 32 32)"/>
+  <path d="M23 25h18L23 39h18" fill="none" stroke="#F4FAF7" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

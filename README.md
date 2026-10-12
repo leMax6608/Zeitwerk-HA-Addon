@@ -40,6 +40,7 @@ Zeitwerk ist ein privates, lokales Arbeitszeitkonto als Home-Assistant-Add-on. H
 - jeden Start-, Pausen- und Stopp-Klick sofort absturzsicher speichern
 - nach jeder Änderung automatisch eine zweite konsistente Sicherheitskopie anlegen
 - helles, dunkles oder automatisch ans Gerät angepasstes Farbschema
+- einheitliches Icon für Home-Assistant-App-Store, Browser und iPhone-Homescreen
 - auf iPhone und iPad als Web-App zum Home-Bildschirm hinzufügen
 - optional die laufende Arbeitszeit über Home Assistant als iPhone Live Activity auf Sperrbildschirm und Dynamic Island anzeigen
 - optional motivierende Mitteilungen bei 25, 50 und 75 Prozent des Tagesziels senden
