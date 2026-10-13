@@ -447,7 +447,9 @@ h1 { font-size: clamp(2.6rem, 4.7vw, 4rem); font-weight: 700; letter-spacing: -.
 .settings-panel .switch-row input[type="checkbox"]:checked::after { transform: translateX(20px); }
 .settings-panel .switch-row input[type="checkbox"]:focus-visible { outline: 3px solid var(--brand-highlight); outline-offset: 3px; }
 .milestone-style-field { margin-left: 0; transition: opacity .2s ease; }
-.milestone-style-field.is-disabled { opacity: .48; }
+.milestone-style-field.is-disabled { opacity: 1; }
+.milestone-style-field.is-disabled > span { color: var(--muted); }
+.milestone-style-field.is-disabled select { opacity: .65; }
 .settings-panel select:disabled { cursor: not-allowed; }
 .settings-panel input:not([type="checkbox"]):not([type="radio"]), .settings-panel select, .settings-panel textarea { background: var(--surface); }
 .settings-panel .theme-options { gap: 3px; padding: 4px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-3); }
@@ -551,4 +553,110 @@ dialog[open] { animation: zeitwerk-dialog-enter .28s cubic-bezier(.2, .75, .2, 1
 }
 @media (max-width: 900px) and (prefers-reduced-motion: reduce) {
   .mobile-nav::before { transition: none !important; }
+}
+
+/* Personal planning and quieter, neutral dark surfaces. */
+[data-theme="dark"] {
+  --bg: #15171c;
+  --surface: #202329;
+  --surface-2: #292d35;
+  --surface-3: #383f4a;
+  --ink: #f2f4f8;
+  --muted: #b2bac7;
+  --line: #3a424e;
+  --brand: #91bdff;
+  --brand-strong: #b1d2ff;
+  --brand-soft: #2b405d;
+  --brand-border: #536d91;
+  --glass: rgba(32, 35, 41, .88);
+  --glass-dialog: rgba(32, 35, 41, .98);
+  --shadow: 0 10px 35px rgba(0, 0, 0, .12);
+  --shadow-float: 0 12px 38px rgba(0, 0, 0, .3);
+}
+[data-theme="dark"] body { background: var(--bg); }
+[data-theme="dark"] .app-header, [data-theme="dark"] .mobile-nav { background: var(--glass); }
+[data-theme="dark"] .settings-card.is-open { border-color: var(--line); }
+[data-theme="dark"] .settings-panel input:not([type="checkbox"]):not([type="radio"]), [data-theme="dark"] .settings-panel select { border-color: #4b5565; }
+.page-intro { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.day-plan-button { display: grid; place-items: center; flex: 0 0 auto; width: 44px; height: 44px; padding: 0; border: 1px solid var(--line); border-radius: 15px; background: var(--surface); color: var(--muted); cursor: pointer; transition: color .25s ease, background-color .25s ease, transform .3s ease; }
+.day-plan-button svg { width: 21px; height: 21px; }
+.day-plan-button:hover { color: var(--brand-strong); background: var(--brand-soft); }
+.day-plan-preview { display: grid; gap: 0; padding: 4px 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface-2); }
+.day-plan-preview > span { display: flex; justify-content: space-between; gap: 15px; padding: 12px 0; font-size: .85rem; color: var(--muted); }
+.day-plan-preview > span + span { border-top: 1px solid var(--line); }
+.day-plan-preview b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.day-plan-preview > span:last-child b { color: var(--brand-strong); }
+.finished-note { margin-top: 4px; border-top: 1px solid var(--line); }
+.finished-note summary { display: flex; align-items: center; gap: 9px; padding: 17px 0 0; list-style: none; cursor: pointer; color: var(--brand-strong); font-size: .84rem; font-weight: 620; }
+.finished-note summary::-webkit-details-marker { display: none; }
+.finished-note summary svg { width: 17px; height: 17px; flex: 0 0 auto; }
+.optional-label { margin-left: auto; color: var(--muted); font-size: .7rem; font-weight: 450; }
+.finished-note form { display: grid; gap: 12px; padding-top: 18px; }
+.finished-note form > .button { justify-self: start; }
+.finished-note textarea { background: var(--surface-2); min-height: 130px; line-height: 1.55; resize: vertical; }
+#dayNoteStatus { color: var(--muted); font-size: .75rem; }
+.day-note-display { padding: 16px 0 0; font-size: .82rem; color: var(--muted); }
+.day-note-display p, .calendar-day-note p { margin: 0 0 7px; white-space: pre-wrap; }
+.day-note-display ul, .calendar-day-note ul { margin: 5px 0 10px; padding-left: 20px; }
+.day-note-display li, .calendar-day-note li { padding: 2px 0; }
+.finished-card.day-off .finished-main { margin: 12px 0; }
+.finished-card.day-off #finishedDuration { font-size: clamp(1.9rem, 4vw, 2.9rem); line-height: 1.1; }
+.finished-card.day-off #finishedUnit { margin-top: 14px; font-size: .88rem; }
+.settings-icon { border: 1px solid rgba(255, 255, 255, .18); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18), 0 3px 8px rgba(30, 40, 70, .1); }
+.settings-icon svg { width: 21px; height: 21px; stroke-width: 1.65; }
+.settings-icon.model { color: #fff; background: linear-gradient(145deg, #5c8bed, #416dcc); }
+.settings-icon.live { color: #fff; background: linear-gradient(145deg, #9a85dd, #7864b9); }
+.settings-icon.notifications { color: #fff; background: linear-gradient(145deg, #e79380, #cc705e); }
+.settings-icon.money { color: #fff; background: linear-gradient(145deg, #62a994, #438c76); }
+.settings-icon.vacation { color: #fff; background: linear-gradient(145deg, #d5a968, #b58949); }
+.settings-icon.holidays { color: #fff; background: linear-gradient(145deg, #ad89bf, #89629e); }
+.settings-icon.appearance { color: #fff; background: linear-gradient(145deg, #8d99b5, #687791); }
+.settings-icon.data { color: #fff; background: linear-gradient(145deg, #7ba3b9, #577f97); }
+.vacation-budget { display: grid; grid-template-columns: 1.2fr 1fr 1fr; align-items: center; gap: 12px; }
+.vacation-budget > div { display: grid; gap: 1px; }
+.vacation-budget strong { color: var(--brand-strong); font-size: 2.4rem; line-height: 1.1; letter-spacing: -.04em; }
+.vacation-budget b { font-size: 1.25rem; font-variant-numeric: tabular-nums; }
+.vacation-budget span { color: var(--muted); font-size: .72rem; }
+.vacation-more summary, .holiday-list-details summary { cursor: pointer; font-size: .84rem; font-weight: 600; color: var(--ink); }
+.vacation-more > .field-row { margin-top: 17px; }
+.vacation-period-list { display: grid; gap: 12px; }
+.vacation-period-list h3 { font-size: .92rem; margin: 0 0 3px; }
+.vacation-period { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 15px; border: 1px solid var(--line); border-radius: 15px; background: var(--surface); }
+.vacation-period > div:first-child { display: grid; min-width: 0; gap: 4px; }
+.vacation-period b { font-size: .83rem; }
+.vacation-period span { color: var(--muted); font-size: .75rem; overflow-wrap: anywhere; }
+.vacation-period-actions { display: flex; gap: 12px; flex: 0 0 auto; }
+.remove-vacation { color: var(--danger); }
+.holiday-list-heading, .holiday-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.holiday-list-heading > b { font-size: .86rem; }
+.holiday-list-heading .text-action { font-size: .77rem; }
+.holiday-row { padding: 14px 0; }
+.holiday-row + .holiday-row { border-top: 1px solid var(--line); }
+.holiday-row > div { display: grid; gap: 3px; }
+.holiday-row b { font-size: .81rem; }
+.holiday-row small { color: var(--muted); font-size: .75rem; }
+.holiday-row .text-action { flex: 0 0 auto; font-size: .76rem; }
+.holiday-row.is-excluded b { color: var(--muted); text-decoration: line-through; }
+.holiday-list { margin-top: 6px; }
+.settings-section-copy a { color: var(--brand-strong); }
+.view.active { animation-duration: .38s; animation-timing-function: cubic-bezier(.22, 1, .36, 1); }
+@keyframes zeitwerk-page-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+.settings-panel, .settings-card.is-open .settings-panel { transition-timing-function: cubic-bezier(.22, 1, .36, 1); }
+.mobile-nav::before { transition-duration: .42s; }
+.week-bars .day-bar-fill, .month-fill { transition: height .5s cubic-bezier(.22, 1, .36, 1), width .5s cubic-bezier(.22, 1, .36, 1); }
+@media (max-width: 620px) {
+  .day-plan-button { width: 39px; height: 39px; border-radius: 13px; }
+  .vacation-period { align-items: flex-start; flex-direction: column; gap: 11px; }
+  .vacation-period-actions { align-self: flex-end; }
+  .vacation-budget strong { font-size: 2.05rem; }
+  .vacation-budget { gap: 8px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .day-plan-button, .mobile-nav::before, .week-bars .day-bar-fill, .month-fill { transition: none !important; }
+}
+@media (prefers-contrast: more) {
+  :root { --muted: #3f4855; --line: #87929e; }
+  [data-theme="dark"] { --muted: #d7dfe9; --line: #8896a9; }
+  .app-header, .mobile-nav, .settings-save { background: var(--surface) !important; }
+  [data-theme="dark"] .settings-panel input:not([type="checkbox"]):not([type="radio"]), [data-theme="dark"] .settings-panel select { border-color: var(--line); }
 }

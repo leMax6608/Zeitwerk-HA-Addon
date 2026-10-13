@@ -17,7 +17,7 @@ from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -30,6 +30,10 @@ PRE_V4_PATH = DATA_DIR / "zeitwerk-pre-v4.db"
 PRE_G_MIGRATION_PATH = DATA_DIR / "zeitwerk-pre-g-migration.db"
 PORT = int(os.environ.get("PORT", "8099"))
 DB_LOCK = threading.RLock()
+HOLIDAY_LOCK = threading.RLock()
+HOLIDAY_ATTEMPTS = {}
+HOLIDAY_ERRORS = {}
+GERMAN_STATES = {"BW": "Baden-Württemberg", "BY": "Bayern", "BE": "Berlin", "BB": "Brandenburg", "HB": "Bremen", "HH": "Hamburg", "HE": "Hessen", "MV": "Mecklenburg-Vorpommern", "NI": "Niedersachsen", "NW": "Nordrhein-Westfalen", "RP": "Rheinland-Pfalz", "SL": "Saarland", "SN": "Sachsen", "ST": "Sachsen-Anhalt", "SH": "Schleswig-Holstein", "TH": "Thüringen"}
 
 DEFAULT_SETTINGS = {
     "display_name": "",
@@ -52,6 +56,15 @@ DEFAULT_SETTINGS = {
     "end_summary_enabled": True,
     "hourly_gross_eur": 0,
     "monthly_gross_eur": 0,
+    "pause_minimum_notification_enabled": False,
+    "pause_reminder_enabled": False,
+    "end_soon_notification_enabled": False,
+    "overtime_notification_enabled": False,
+    "start_notification_enabled": False,
+    "overtime_plan_by_date": {},
+    "holidays_enabled": False,
+    "holiday_state": "",
+    "holiday_exclusions": [],
 }
 
 TYPE_LABELS = {
@@ -218,7 +231,7 @@ def sync_live_activity(settings: dict, phase: str, entry: dict | None = None) ->
     item = entry or {}
     net_work_seconds = max(0, int(item.get("net_work_seconds", 0) or 0))
     break_seconds = max(0, int(item.get("recorded_break_seconds", 0) or 0))
-    target_minutes = daily_target(settings, item.get("work_date"))
+    target_minutes = planned_target(settings, item.get("work_date"))
     target_seconds = max(60, target_minutes * 60)
     remaining_seconds = max(0, target_seconds - net_work_seconds)
     short_work_type = {
@@ -470,6 +483,13 @@ def init_db() -> None:
                 PRIMARY KEY(entry_id, milestone),
                 FOREIGN KEY(entry_id) REFERENCES entries(id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS holiday_cache (
+                state TEXT NOT NULL,
+                year INTEGER NOT NULL,
+                holidays_json TEXT NOT NULL,
+                fetched_at TEXT NOT NULL,
+                PRIMARY KEY(state, year)
+            );
             """
         )
         con.execute("DROP INDEX IF EXISTS idx_entries_one_work_per_day")
@@ -586,6 +606,88 @@ def vacation_allowance_for(settings: dict, year: int) -> float:
             except (TypeError, ValueError):
                 pass
     return max(0, float(settings.get("vacation_allowance", DEFAULT_SETTINGS["vacation_allowance"]) or 0))
+
+
+def planned_target(settings: dict, day_value=None) -> int:
+    key = str(day_value or date.today().isoformat())[:10]
+    plans = settings.get("overtime_plan_by_date") or {}
+    return daily_target(settings, key) + max(0, min(720, int(plans.get(key, 0) or 0)))
+
+
+def cached_holidays(settings: dict, year: int) -> list[dict]:
+    state = settings.get("holiday_state", "")
+    if state not in GERMAN_STATES:
+        return []
+    with DB_LOCK, db() as con:
+        row = con.execute("SELECT holidays_json FROM holiday_cache WHERE state=? AND year=?", (state, year)).fetchone()
+    try:
+        return json.loads(row[0]) if row else []
+    except json.JSONDecodeError:
+        return []
+
+
+def holiday_dates(settings: dict, year: int) -> dict[str, str]:
+    if not settings.get("holidays_enabled"):
+        return {}
+    excluded = set(settings.get("holiday_exclusions") or [])
+    return {item["date"]: item["name"] for item in cached_holidays(settings, year) if item["date"] not in excluded}
+
+
+def refresh_holidays(settings: dict, year: int, force: bool = False) -> bool:
+    state = settings.get("holiday_state", "")
+    if not settings.get("holidays_enabled") or state not in GERMAN_STATES or not 2000 <= year <= 2100:
+        return False
+    key = (state, year)
+    with HOLIDAY_LOCK:
+        with DB_LOCK, db() as con:
+            row = con.execute("SELECT fetched_at FROM holiday_cache WHERE state=? AND year=?", key).fetchone()
+        if not force:
+            try:
+                if row and datetime.now() - datetime.fromisoformat(row[0]).replace(tzinfo=None) < timedelta(days=7):
+                    return True
+            except ValueError:
+                pass
+            if time.monotonic() - HOLIDAY_ATTEMPTS.get(key, -10000) < 300:
+                return bool(row)
+        HOLIDAY_ATTEMPTS[key] = time.monotonic()
+        query = urlencode({"countryIsoCode": "DE", "subdivisionCode": f"DE-{state}", "languageIsoCode": "DE", "validFrom": f"{year}-01-01", "validTo": f"{year}-12-31"})
+        try:
+            request = Request("https://openholidaysapi.org/PublicHolidays?" + query, headers={"Accept": "application/json", "User-Agent": "Zeitwerk/DesignExperiment"})
+            with urlopen(request, timeout=4) as response:
+                raw = json.load(response)
+            if not isinstance(raw, list) or not raw:
+                raise ValueError("Für dieses Jahr wurden keine Feiertage geliefert")
+            holidays = {}
+            for item in raw:
+                if item.get("regionalScope") == "Local" or item.get("temporalScope") != "FullDay":
+                    continue
+                names = item.get("name") or []
+                name = next((str(name.get("text", "")) for name in names if name.get("language") == "DE"), "Feiertag")[:160]
+                first, last = date.fromisoformat(item["startDate"]), date.fromisoformat(item["endDate"])
+                # In Bavaria this only applies in certain municipalities.
+                if state == "BY" and first.month == 8 and first.day == 15:
+                    continue
+                if first.year != year or last.year != year or (last - first).days > 7:
+                    continue
+                for offset in range((last - first).days + 1):
+                    holidays[(first + timedelta(days=offset)).isoformat()] = name
+            if not holidays:
+                raise ValueError("Keine passenden Feiertage gefunden")
+            with DB_LOCK, db() as con:
+                con.execute("INSERT INTO holiday_cache(state,year,holidays_json,fetched_at) VALUES(?,?,?,?) ON CONFLICT(state,year) DO UPDATE SET holidays_json=excluded.holidays_json,fetched_at=excluded.fetched_at", (state, year, json.dumps([{"date": day, "name": name} for day, name in sorted(holidays.items())], ensure_ascii=False), datetime.now().isoformat(timespec="seconds")))
+            HOLIDAY_ERRORS.pop(key, None)
+            create_safety_backup()
+            return True
+        except (HTTPError, URLError, TimeoutError, OSError, ValueError, KeyError, TypeError) as exc:
+            HOLIDAY_ERRORS[key] = "Feiertage konnten nicht aktualisiert werden. Bereits gespeicherte Daten bleiben verfügbar."
+            return bool(row)
+
+
+def holiday_status(settings: dict, year: int) -> dict:
+    state = settings.get("holiday_state", "")
+    with DB_LOCK, db() as con:
+        row = con.execute("SELECT fetched_at FROM holiday_cache WHERE state=? AND year=?", (state, year)).fetchone()
+    return {"year": year, "state": state, "state_name": GERMAN_STATES.get(state, ""), "fetched_at": row[0] if row else None, "error": HOLIDAY_ERRORS.get((state, year)), "holidays": cached_holidays(settings, year)}
 
 
 def parse_time(value: str | None) -> int | None:
@@ -746,7 +848,15 @@ def list_entries(start_date: str, end_date: str, settings: dict) -> list[dict]:
             "SELECT * FROM entries WHERE work_date BETWEEN ? AND ? ORDER BY work_date DESC, start_time DESC, id DESC",
             (start_date, end_date),
         ).fetchall()
-    return [serialize_entry(row, settings) for row in rows]
+    entries = [serialize_entry(row, settings) for row in rows]
+    occupied = {entry["work_date"] for entry in entries if entry["type"] != "U"}
+    for year in range(int(start_date[:4]), int(end_date[:4]) + 1):
+        for day, name in holiday_dates(settings, year).items():
+            if not start_date <= day <= end_date or day in occupied:
+                continue
+            entries = [entry for entry in entries if not (entry["work_date"] == day and entry["type"] == "U")]
+            entries.append(serialize_entry({"id": f"holiday-{day}", "work_date": day, "type": "FT", "note": name, "automatic_holiday": True, "holiday_name": name}, settings))
+    return sorted(entries, key=lambda entry: (entry["work_date"], str(entry.get("start_time") or "")), reverse=True)
 
 
 def active_entry(settings: dict) -> dict | None:
@@ -764,7 +874,7 @@ def next_vacation(settings: dict) -> dict | None:
             "SELECT work_date FROM entries WHERE type='U' AND work_date>=? ORDER BY work_date",
             (today.isoformat(),),
         ).fetchall()
-    dates = sorted({date.fromisoformat(row[0]) for row in rows})
+    dates = sorted({date.fromisoformat(row[0]) for row in rows if row[0] not in holiday_dates(settings, int(row[0][:4]))})
     if not dates:
         return None
     first = dates[0]
@@ -772,7 +882,7 @@ def next_vacation(settings: dict) -> dict | None:
     count = 1
     for upcoming in dates[1:]:
         next_workday = last + timedelta(days=1)
-        while daily_target(settings, next_workday.isoformat()) == 0 and next_workday < upcoming:
+        while (daily_target(settings, next_workday.isoformat()) == 0 or next_workday.isoformat() in holiday_dates(settings, next_workday.year)) and next_workday < upcoming:
             next_workday += timedelta(days=1)
         if upcoming != next_workday:
             break
@@ -781,10 +891,31 @@ def next_vacation(settings: dict) -> dict | None:
     return {"start_date": first.isoformat(), "end_date": last.isoformat(), "workdays": count, "days_until": (first - today).days}
 
 
+def vacation_periods(settings: dict) -> list[dict]:
+    with DB_LOCK, db() as con:
+        rows = con.execute("SELECT work_date,note FROM entries WHERE type='U' ORDER BY work_date").fetchall()
+    periods = []
+    for row in rows:
+        day = date.fromisoformat(row["work_date"])
+        if row["work_date"] in holiday_dates(settings, day.year):
+            continue
+        previous = periods[-1] if periods else None
+        expected = date.fromisoformat(previous["end_date"]) + timedelta(days=1) if previous else day
+        while previous and expected < day and (daily_target(settings, expected.isoformat()) == 0 or expected.isoformat() in holiday_dates(settings, expected.year)):
+            expected += timedelta(days=1)
+        if previous and expected == day and previous["note"] == row["note"]:
+            previous["end_date"] = day.isoformat()
+            previous["workdays"] += 1
+            previous["dates"].append(day.isoformat())
+        else:
+            periods.append({"start_date": day.isoformat(), "end_date": day.isoformat(), "workdays": 1, "note": row["note"], "dates": [day.isoformat()]})
+    return periods
+
+
 MOTIVATION_SAYINGS = {
-    25: ("Der Anfang ist gemacht – weiter so!", "Du bist gut im Rhythmus.", "Ein guter Start zählt."),
-    50: ("Halbzeit – bleib dran!", "Du bist genau auf Kurs.", "Die zweite Hälfte kann kommen."),
-    75: ("Der Endspurt beginnt!", "Das Ziel ist schon in Sicht.", "Stark geblieben – fast geschafft."),
+    25: ("Der Anfang ist gemacht – weiter so!", "Du bist gut im Rhythmus.", "Ein guter Start zählt.", "Ein Viertel ist geschafft. Schritt für Schritt.", "Deine erste Etappe steht.", "Schon einiges erledigt – das zählt.", "Du kommst voran. Bleib bei deinem Tempo.", "Ein guter Morgen wird ein guter Tag.", "Der erste Meilenstein gehört dir.", "Heute geht etwas weiter.", "Ein Viertel näher am Feierabend.", "Dein Einsatz macht sich bemerkbar."),
+    50: ("Halbzeit – bleib dran!", "Du bist genau auf Kurs.", "Die zweite Hälfte kann kommen.", "Die Hälfte liegt schon hinter dir.", "Halb geschafft. Nimm dir einen Moment dafür.", "Dein Tag nimmt Form an.", "Bergfest! Weiter in deinem Tempo.", "Schon die Hälfte gesammelt.", "Eine solide erste Hälfte.", "Der Feierabend rückt näher.", "Viel geschafft, noch einiges möglich.", "Dein Fortschritt kann sich sehen lassen."),
+    75: ("Der Endspurt beginnt!", "Das Ziel ist schon in Sicht.", "Stark geblieben – fast geschafft.", "Nur noch ein Viertel bis zum Tagesziel.", "Du hast heute schon viel geleistet.", "Drei Viertel im Kasten.", "Die letzte Etappe wartet.", "Fast am Ziel – entspannt weiter.", "Das meiste liegt hinter dir.", "Dein Feierabend ist in Reichweite.", "Ein guter Tag geht auf die Zielgerade.", "Noch ein Stück, dann ist das Soll geschafft."),
 }
 
 
@@ -802,7 +933,8 @@ def progress_notification_payload(settings: dict, item: dict, milestone: int) ->
             },
         }
     style = settings.get("milestone_notification_style", "saying_money")
-    saying = MOTIVATION_SAYINGS[milestone][(int(item["id"]) + milestone) % 3]
+    sayings = MOTIVATION_SAYINGS[milestone]
+    saying = sayings[(int(item["id"]) + date.fromisoformat(item["work_date"]).toordinal() + milestone) % len(sayings)]
     if style == "percent":
         title, message = "Zeitwerk · Fortschritt", f"{milestone} % deines Tagesziels geschafft."
     elif style == "saying":
@@ -870,6 +1002,57 @@ def check_milestones() -> None:
     item = active_entry(settings)
     if item:
         send_progress_notifications(settings, item)
+        send_day_notifications(settings, item)
+
+
+def day_notification_payload(settings: dict, item: dict, event: str) -> dict:
+    planned = planned_target(settings, item["work_date"])
+    required = minimum_break(max(planned, int(item.get("net_work_seconds", 0)) / 60), settings.get("age_group", "adult"))
+    extra = planned - daily_target(settings, item["work_date"])
+    messages = {
+        "start": ("Arbeitszeit gestartet", f"Dein Tagesplan: {format_duration(planned)} Std. Gute Arbeit und einen angenehmen Tag!", "mdi:play-circle-outline"),
+        "pause_minimum": ("Pausenziel erreicht", f"{required} Minuten anrechenbare Pause geschafft. Du kannst weiter pausieren oder entspannt weiterarbeiten.", "mdi:coffee-outline"),
+        "pause_reminder": ("Zeit für eine Pause", f"Für deine Arbeitszeit sind {required} Minuten Pause nötig. Bisher sind {item.get('qualified_break_minutes', 0)} Minuten anrechenbar.", "mdi:coffee-outline"),
+        "end_soon": ("Feierabend in Sicht", "Noch höchstens 15 Minuten bis zu deinem Tagesplan. Zeit, die letzten Aufgaben abzurunden.", "mdi:flag-checkered"),
+        "overtime": ("Überstundenplan geschafft", f"Deine geplanten {format_duration(extra)} Std. zusätzlich sind erreicht. Insgesamt {format_duration(planned)} Std. geschafft.", "mdi:check-circle-outline"),
+    }
+    title, message, icon = messages[event]
+    return {"title": f"Zeitwerk · {title}", "message": message, "data": {"tag": f"zeitwerk_{event}_{item['id']}", "notification_icon": icon, "notification_icon_color": "#FFFFFF", "color": NOTIFICATION_ACCENT, "url": zeitwerk_app_url()}}
+
+
+def send_once_day_notification(settings: dict, item: dict, event: str, key: int) -> bool:
+    service = settings.get("live_activity_service", "")
+    if not service:
+        return False
+    with DB_LOCK, db() as con:
+        inserted = con.execute("INSERT OR IGNORE INTO milestone_notifications(entry_id,milestone,sent_at) VALUES(?,?,?)", (item["id"], key, datetime.now().isoformat(timespec="seconds"))).rowcount
+    if not inserted:
+        return False
+    result = call_home_assistant_notify(service, day_notification_payload(settings, item, event))
+    if not result.get("ok"):
+        with DB_LOCK, db() as con:
+            con.execute("DELETE FROM milestone_notifications WHERE entry_id=? AND milestone=?", (item["id"], key))
+    return bool(result.get("ok"))
+
+
+def send_day_notifications(settings: dict, item: dict) -> None:
+    planned = planned_target(settings, item["work_date"])
+    net = int(item.get("net_work_seconds", 0)) / 60
+    qualified = int(item.get("qualified_break_minutes", 0))
+    required = minimum_break(max(planned, net), settings.get("age_group", "adult"))
+    missing_now = minimum_break(net, settings.get("age_group", "adult"))
+    if settings.get("pause_minimum_notification_enabled") and required and qualified >= required:
+        if send_once_day_notification(settings, item, "pause_minimum", 2000 + required):
+            return
+    if settings.get("pause_reminder_enabled") and not item.get("is_paused") and missing_now > qualified:
+        if send_once_day_notification(settings, item, "pause_reminder", 2100 + missing_now):
+            return
+    extra = planned - daily_target(settings, item["work_date"])
+    if settings.get("overtime_notification_enabled") and extra > 0 and item.get("worked_minutes", 0) >= planned:
+        if send_once_day_notification(settings, item, "overtime", 4000 + extra):
+            return
+    if settings.get("end_soon_notification_enabled") and not item.get("is_paused") and planned >= 30 and 0 < planned - item.get("worked_minutes", 0) <= 15:
+        send_once_day_notification(settings, item, "end_soon", 6000 + planned)
 
 
 def milestone_worker() -> None:
@@ -897,6 +1080,7 @@ def summary_for(entries: list[dict], settings: dict, start_date: str, end_date: 
     completed_entries = [entry for entry in entries if entry["work_date"] <= today.isoformat()]
     worked = sum(entry["worked_minutes"] for entry in completed_entries)
     account = sum(entry["account_minutes"] for entry in completed_entries)
+    balance_account = sum(entry["account_minutes"] for entry in completed_entries if entry["work_date"] >= start.isoformat())
     vacation = sum(1 for entry in entries if entry["type"] == "U")
     homeoffice = sum(1 for entry in entries if entry["type"] == "H")
     commutes = sum(1 for entry in entries if entry.get("commute"))
@@ -905,7 +1089,7 @@ def summary_for(entries: list[dict], settings: dict, start_date: str, end_date: 
         "worked_minutes": worked,
         "target_minutes": target_minutes,
         "credited_minutes": account - worked,
-        "balance_minutes": account - target_minutes,
+        "balance_minutes": balance_account - target_minutes,
         "vacation_days": vacation,
         "homeoffice_days": homeoffice,
         "commute_days": commutes,
@@ -980,6 +1164,8 @@ class Handler(SimpleHTTPRequestHandler):
                 date.fromisoformat(end_date)
             except ValueError:
                 return self.error_response("Ungültiger Datumsbereich")
+            for year in {int(start_date[:4]), int(end_date[:4]), today.year}:
+                refresh_holidays(settings, year)
             entries = list_entries(start_date, end_date, settings)
             return self.json_response(
                 {
@@ -988,6 +1174,8 @@ class Handler(SimpleHTTPRequestHandler):
                     "active": active_entry(settings),
                     "today_entries": list_entries(today.isoformat(), today.isoformat(), settings),
                     "next_vacation": next_vacation(settings),
+                    "holidays": holiday_status(settings, int(start_date[:4])),
+                    "vacation_periods": vacation_periods(settings),
                     "summary": summary_for(entries, settings, start_date, end_date),
                     "storage": {"durable": True, "safety_copy": SAFETY_PATH.exists()},
                     "live_activity": {
@@ -1001,7 +1189,8 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/backup.json":
             with DB_LOCK, db() as con:
                 rows = [dict(row) for row in con.execute("SELECT * FROM entries ORDER BY work_date, id")]
-            payload = {"version": 1, "exported_at": datetime.now().isoformat(), "settings": settings, "entries": rows}
+                holiday_rows = [{"state": row["state"], "year": row["year"], "holidays": json.loads(row["holidays_json"]), "fetched_at": row["fetched_at"]} for row in con.execute("SELECT * FROM holiday_cache ORDER BY state,year")]
+            payload = {"version": 1, "exported_at": datetime.now().isoformat(), "settings": settings, "entries": rows, "holiday_cache": holiday_rows}
             data = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -1064,6 +1253,18 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.save_settings(payload)
             if path == "/api/live-activity/test" and method == "POST":
                 return self.test_live_activity()
+            if path == "/api/day-plan" and method == "POST":
+                return self.save_day_plan(payload)
+            if path == "/api/holidays/refresh" and method == "POST":
+                settings = get_settings()
+                year = int(payload.get("year", date.today().year))
+                refresh_holidays(settings, year, force=True)
+                return self.json_response({"ok": True, "holidays": holiday_status(settings, year)})
+            if path == "/api/holidays/exception" and method == "POST":
+                return self.save_holiday_exception(payload)
+            note_match = re.fullmatch(r"/api/entries/(\d+)/note", path)
+            if note_match and method == "POST":
+                return self.save_note(int(note_match.group(1)), payload)
             if path == "/api/timer/start" and method == "POST":
                 return self.timer_start(payload)
             if path == "/api/timer/reopen" and method == "POST":
@@ -1072,6 +1273,8 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.timer_action(path.rsplit("/", 1)[-1])
             if path == "/api/vacation/range" and method == "POST":
                 return self.save_vacation_range(payload)
+            if path == "/api/vacation/remove" and method == "POST":
+                return self.remove_vacation_range(payload)
             if path == "/api/entries/x-extra" and method == "POST":
                 return self.save_x_extra(payload)
             if path == "/api/entries" and method == "POST":
@@ -1081,7 +1284,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.save_entry(payload, int(match.group(1)))
             if path == "/api/import" and method == "POST":
                 return self.import_backup(payload)
-        except (ValueError, sqlite3.Error) as exc:
+        except (ValueError, TypeError, sqlite3.Error) as exc:
             return self.error_response(str(exc))
         return self.error_response("API-Endpunkt nicht gefunden", HTTPStatus.NOT_FOUND)
 
@@ -1136,6 +1339,16 @@ class Handler(SimpleHTTPRequestHandler):
             updates["live_activity_service"] = normalized_notify_service(updates["live_activity_service"])
         if "milestone_notification_style" in updates and updates["milestone_notification_style"] not in {"saying_money", "saying", "percent"}:
             raise ValueError("Unbekannter Stil für Motivationsmeldungen")
+        if "holiday_state" in updates and updates["holiday_state"] not in {"", *GERMAN_STATES}:
+            raise ValueError("Bitte ein gültiges Bundesland wählen")
+        if updates.get("holidays_enabled") and not updates.get("holiday_state", get_settings().get("holiday_state")):
+            raise ValueError("Bitte zuerst dein Bundesland wählen")
+        for flag in ("pause_minimum_notification_enabled", "pause_reminder_enabled", "end_soon_notification_enabled", "overtime_notification_enabled", "start_notification_enabled", "holidays_enabled"):
+            if flag in updates and not isinstance(updates[flag], bool):
+                raise ValueError("Ungültiger Schalterwert")
+        # Day plans and exclusions are changed through their own validated routes.
+        updates.pop("overtime_plan_by_date", None)
+        updates.pop("holiday_exclusions", None)
         previous_settings = get_settings()
         with DB_LOCK, db() as con:
             for key, value in updates.items():
@@ -1147,6 +1360,53 @@ class Handler(SimpleHTTPRequestHandler):
         if previous_settings.get("live_activity_enabled") and updates.get("live_activity_enabled") is False:
             clear_live_activity(previous_settings.get("live_activity_service", ""))
         self.json_response({"ok": True, "settings": get_settings()})
+
+    def save_day_plan(self, payload: dict) -> None:
+        day = date.fromisoformat(str(payload.get("work_date", ""))).isoformat()
+        extra = int(payload.get("extra_minutes", 0))
+        if extra < 0 or extra > 720:
+            raise ValueError("Bitte zwischen 0 und 12 Stunden planen")
+        settings = get_settings()
+        if daily_target(settings, day) + extra > 1440:
+            raise ValueError("Der Tagesplan darf höchstens 24 Stunden umfassen")
+        with DB_LOCK, db() as con:
+            plans = get_settings().get("overtime_plan_by_date", {}).copy()
+            if extra:
+                plans[day] = extra
+            else:
+                plans.pop(day, None)
+            con.execute("UPDATE settings SET value=? WHERE key='overtime_plan_by_date'", (json.dumps(plans),))
+        create_safety_backup()
+        current = active_entry(get_settings())
+        if current and current["work_date"] == day:
+            sync_live_activity(get_settings(), "pause" if current["is_paused"] else "resume", current)
+        self.json_response({"ok": True, "extra_minutes": extra})
+
+    def save_holiday_exception(self, payload: dict) -> None:
+        day = date.fromisoformat(str(payload.get("work_date", ""))).isoformat()
+        if not isinstance(payload.get("excluded"), bool):
+            raise ValueError("Ungültige Feiertagsauswahl")
+        with DB_LOCK, db() as con:
+            excluded = set(get_settings().get("holiday_exclusions") or [])
+            if payload["excluded"]:
+                excluded.add(day)
+            else:
+                excluded.discard(day)
+            con.execute("UPDATE settings SET value=? WHERE key='holiday_exclusions'", (json.dumps(sorted(excluded)),))
+        create_safety_backup()
+        self.json_response({"ok": True})
+
+    def save_note(self, entry_id: int, payload: dict) -> None:
+        note = str(payload.get("note", ""))
+        if len(note) > 2000:
+            raise ValueError("Die Tagesnotiz darf höchstens 2000 Zeichen lang sein")
+        with DB_LOCK, db() as con:
+            row = con.execute("SELECT * FROM entries WHERE id=?", (entry_id,)).fetchone()
+            if not row or row["type"] not in {*WORK_TYPES, "X"} or (row["type"] in WORK_TYPES and not row["finalized"]):
+                raise ValueError("Tagesnotizen sind nach Abschluss des Arbeitstags möglich")
+            con.execute("UPDATE entries SET note=?,updated_at=? WHERE id=?", (note, datetime.now().isoformat(timespec="seconds"), entry_id))
+        create_safety_backup()
+        self.json_response({"ok": True})
 
     def test_live_activity(self) -> None:
         settings = get_settings()
@@ -1194,7 +1454,7 @@ class Handler(SimpleHTTPRequestHandler):
             "start_time": start if timed else None,
             "end_time": end if timed else None,
             "manual_break_minutes": manual_break,
-            "note": str(payload.get("note", ""))[:500],
+            "note": str(payload.get("note", ""))[:2000],
             "commute": 1 if payload.get("commute") and entry_type != "H" else 0,
         }
 
@@ -1276,6 +1536,8 @@ class Handler(SimpleHTTPRequestHandler):
         create_safety_backup()
         serialized = serialize_entry(row, settings)
         live_activity = sync_live_activity(settings, "start", serialized)
+        if settings.get("start_notification_enabled"):
+            send_once_day_notification(settings, serialized, "start", 1001)
         self.json_response({"ok": True, "resumed": False, "entry": serialized, "live_activity": live_activity})
 
     def timer_reopen(self) -> None:
@@ -1321,6 +1583,10 @@ class Handler(SimpleHTTPRequestHandler):
             raise ValueError("Im Zeitraum liegt kein Arbeitstag laut deinem Arbeitsmodell")
         now = datetime.now().isoformat(timespec="seconds")
         note = str(payload.get("note", ""))[:500]
+        automatic_days = set()
+        for year in {first.year, last.year}:
+            refresh_holidays(settings, year)
+            automatic_days.update(holiday_dates(settings, year))
         with DB_LOCK, db() as con:
             rows = con.execute(
                 "SELECT work_date,type FROM entries WHERE work_date BETWEEN ? AND ?",
@@ -1332,7 +1598,7 @@ class Handler(SimpleHTTPRequestHandler):
             conflicts = [day for day in work_dates if existing.get(day, set()) - {"U", "FT"}]
             if conflicts:
                 raise ValueError(f"Am {date.fromisoformat(conflicts[0]).strftime('%d.%m.%Y')} besteht bereits ein anderer Eintrag. Bitte diesen zuerst prüfen.")
-            vacation_dates = [day for day in work_dates if "FT" not in existing.get(day, set())]
+            vacation_dates = [day for day in work_dates if "FT" not in existing.get(day, set()) and day not in automatic_days]
             if not vacation_dates:
                 raise ValueError("Im Zeitraum bleibt nach den eingetragenen freien Tagen kein Urlaubstag übrig")
             added = 0
@@ -1381,13 +1647,51 @@ class Handler(SimpleHTTPRequestHandler):
         serialized = serialize_entry(row, settings)
         if action == "stop":
             send_progress_notifications(settings, serialized, goal_only=True)
+        else:
+            send_day_notifications(settings, serialized)
         live_activity = sync_live_activity(settings, action, serialized)
         self.json_response({"ok": True, "entry": serialized, "live_activity": live_activity})
+
+    def remove_vacation_range(self, payload: dict) -> None:
+        first = date.fromisoformat(str(payload.get("start_date", ""))).isoformat()
+        last = date.fromisoformat(str(payload.get("end_date", ""))).isoformat()
+        if first > last:
+            raise ValueError("Ungültiger Urlaubszeitraum")
+        with DB_LOCK, db() as con:
+            count = con.execute("DELETE FROM entries WHERE type='U' AND work_date BETWEEN ? AND ?", (first, last)).rowcount
+        create_safety_backup()
+        self.json_response({"ok": True, "removed": count})
 
     def import_backup(self, payload: dict) -> None:
         if payload.get("version") != 1 or not isinstance(payload.get("entries"), list):
             raise ValueError("Diese Sicherungsdatei wird nicht erkannt")
         settings = dict(payload.get("settings") or {})
+        plans = settings.get("overtime_plan_by_date") or {}
+        cleaned_plans = {}
+        if isinstance(plans, dict):
+            for day, value in plans.items():
+                try:
+                    key = date.fromisoformat(str(day)).isoformat()
+                    minutes = int(value)
+                    if 0 < minutes <= 720:
+                        cleaned_plans[key] = minutes
+                except (TypeError, ValueError):
+                    continue
+        settings["overtime_plan_by_date"] = cleaned_plans
+        exclusions = settings.get("holiday_exclusions") or []
+        cleaned_exclusions = []
+        if isinstance(exclusions, list):
+            for day in exclusions:
+                try:
+                    cleaned_exclusions.append(date.fromisoformat(str(day)).isoformat())
+                except ValueError:
+                    continue
+        settings["holiday_exclusions"] = sorted(set(cleaned_exclusions))
+        if settings.get("holiday_state", "") not in GERMAN_STATES:
+            settings["holiday_state"] = ""
+            settings["holidays_enabled"] = False
+        for flag in ("pause_minimum_notification_enabled", "pause_reminder_enabled", "end_soon_notification_enabled", "overtime_notification_enabled", "start_notification_enabled"):
+            settings[flag] = bool(settings.get(flag, False))
         if "daily_work_minutes" not in settings:
             try:
                 imported_days = [int(day) for day in settings.get("workdays", DEFAULT_SETTINGS["workdays"])]
@@ -1396,6 +1700,25 @@ class Handler(SimpleHTTPRequestHandler):
             except (TypeError, ValueError):
                 settings["daily_work_minutes"] = DEFAULT_SETTINGS["daily_work_minutes"]
         with DB_LOCK, db() as con:
+            con.execute("DELETE FROM holiday_cache")
+            for cached in (payload.get("holiday_cache") or [])[:500]:
+                if not isinstance(cached, dict) or cached.get("state") not in GERMAN_STATES:
+                    continue
+                try:
+                    year = int(cached.get("year", 0))
+                    if not 2000 <= year <= 2100:
+                        continue
+                    holidays = []
+                    for holiday in (cached.get("holidays") or [])[:60]:
+                        day = date.fromisoformat(str(holiday.get("date", "")))
+                        if day.year == year:
+                            holidays.append({"date": day.isoformat(), "name": str(holiday.get("name") or "Feiertag")[:160]})
+                    if not holidays:
+                        continue
+                    fetched = datetime.fromisoformat(str(cached.get("fetched_at"))).replace(tzinfo=None).isoformat(timespec="seconds")
+                    con.execute("INSERT OR REPLACE INTO holiday_cache VALUES(?,?,?,?)", (cached["state"], year, json.dumps(holidays, ensure_ascii=False), fetched))
+                except (TypeError, ValueError, AttributeError):
+                    continue
             con.execute("DELETE FROM entries")
             for raw in payload["entries"][:20000]:
                 migrated = dict(raw)

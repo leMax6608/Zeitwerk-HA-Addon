@@ -37,6 +37,7 @@
     K: "Krankheit", S: "Sonderurlaub", F: "Flexzeit-Abbau", A: "Überzeit abfeiern"
   };
   const MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
+  const GERMAN_STATES = { BW: "Baden-Württemberg", BY: "Bayern", BE: "Berlin", BB: "Brandenburg", HB: "Bremen", HH: "Hamburg", HE: "Hessen", MV: "Mecklenburg-Vorpommern", NI: "Niedersachsen", NW: "Nordrhein-Westfalen", RP: "Rheinland-Pfalz", SL: "Saarland", SN: "Sachsen", ST: "Sachsen-Anhalt", SH: "Schleswig-Holstein", TH: "Thüringen" };
   const themeMedia = window.matchMedia("(prefers-color-scheme: dark)");
 
   function applyTheme(preference = "system", remember = true) {
@@ -44,7 +45,7 @@
     const dark = safePreference === "dark" || (safePreference === "system" && themeMedia.matches);
     document.documentElement.dataset.theme = dark ? "dark" : "light";
     document.documentElement.dataset.themePreference = safePreference;
-    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#111216" : "#f5f5f7");
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#15171c" : "#f5f5f7");
     if (remember) localStorage.setItem("zeitwerk-theme", safePreference);
   }
 
@@ -56,6 +57,11 @@
     summary: null,
     liveActivity: null,
     nextVacation: null,
+    holidays: null,
+    vacationPeriods: [],
+    vacationAllowancesDraft: {},
+    vacationYearDirty: false,
+    vacationReturnView: null,
     loadedYear: new Date().getFullYear(),
     calendarDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
     selectedDay: isoDate(new Date()),
@@ -100,7 +106,7 @@
     toast.timer = setTimeout(() => element.classList.remove("show"), 2800);
   }
 
-  async function loadYear(year = state.loadedYear, quiet = false) {
+  async function loadYear(year = state.loadedYear, quiet = false, keepSettings = false) {
     if (!quiet) document.body.classList.remove("loaded");
     try {
       const data = await api(`api/state?from=${year}-01-01&to=${year}-12-31`);
@@ -111,9 +117,11 @@
       state.summary = data.summary;
       state.liveActivity = data.live_activity || null;
       state.nextVacation = data.next_vacation || null;
+      state.holidays = data.holidays || null;
+      state.vacationPeriods = data.vacation_periods || [];
       state.loadedYear = year;
       $("#connectionBanner").classList.add("hidden");
-      renderAll();
+      renderAll(keepSettings);
       document.body.classList.add("loaded");
     } catch (error) {
       document.body.classList.add("loaded");
@@ -138,6 +146,45 @@
   function targetPerDay(dayValue = new Date()) {
     const day = typeof dayValue === "string" ? parseISO(dayValue) : new Date(dayValue);
     return dailyTargets()[weekdayIndex(day)];
+  }
+
+  function overtimeForDay(dayValue = new Date()) {
+    const key = typeof dayValue === "string" ? dayValue : isoDate(dayValue);
+    return Number(state.settings.overtime_plan_by_date?.[key] || 0);
+  }
+
+  function plannedTarget(dayValue = new Date()) {
+    return targetPerDay(dayValue) + overtimeForDay(dayValue);
+  }
+
+  function renderNoteHTML(text) {
+    let list = false, html = "";
+    String(text || "").split("\n").forEach(line => {
+      const bullet = line.match(/^\s*[-*]\s+(.*)$/);
+      if (bullet) {
+        if (!list) { html += "<ul>"; list = true; }
+        html += `<li>${escapeHTML(bullet[1])}</li>`;
+      } else {
+        if (list) { html += "</ul>"; list = false; }
+        html += line.trim() ? `<p>${escapeHTML(line)}</p>` : "<br>";
+      }
+    });
+    return html + (list ? "</ul>" : "");
+  }
+
+  function continueBulletList(event) {
+    if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+    const input = event.target;
+    if (input.selectionStart !== input.selectionEnd) return;
+    const cursor = input.selectionStart;
+    const lineStart = input.value.lastIndexOf("\n", cursor - 1) + 1;
+    const line = input.value.slice(lineStart, cursor);
+    const match = line.match(/^(\s*[-*]\s+)(.*)$/);
+    if (!match) return;
+    event.preventDefault();
+    if (match[2].trim()) input.setRangeText("\n" + match[1], cursor, cursor, "end");
+    else input.setRangeText("", lineStart, cursor, "end");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
   function vacationAllowance(year) {
@@ -174,6 +221,10 @@
     return targetPerDay(day) > 0;
   }
 
+  function countsForAccount(entry) {
+    return !state.settings.tracking_start_date || entry.work_date >= state.settings.tracking_start_date;
+  }
+
   function targetBetween(start, end, capToday = true) {
     const trackingStart = state.settings.tracking_start_date ? parseISO(state.settings.tracking_start_date) : new Date(start);
     const cursor = new Date(Math.max(new Date(start).getTime(), trackingStart.getTime()));
@@ -204,12 +255,13 @@
     return d;
   }
 
-  function renderAll() {
+  function renderAll(keepSettings = false) {
     renderHeader();
     renderDashboard();
     renderCalendar();
     renderReports();
-    renderSettings();
+    if (!keepSettings) renderSettings();
+    else { renderHolidaySettings(); renderVacationSettings(); }
     renderLegend();
   }
 
@@ -222,7 +274,8 @@
     const name = (state.settings.display_name || "").trim();
     const xToday = state.todayEntries.some(entry => entry.type === "X");
     const finishedToday = state.todayEntries.some(entry => ["B", "H"].includes(entry.type) && entry.finalized);
-    $("#pageTitle").textContent = xToday ? (name ? `Tagesziel geschafft, ${name}` : "Tagesziel geschafft") : finishedToday ? (name ? `Feierabend, ${name}` : "Feierabend") : name ? `${greeting}, ${name}` : "Dein Arbeitstag";
+    const freeToday = state.todayEntries.some(entry => ["FT", "U", "S", "K", "F", "A"].includes(entry.type));
+    $("#pageTitle").textContent = freeToday ? "Heute frei" : xToday ? (name ? `Tagesziel geschafft, ${name}` : "Tagesziel geschafft") : finishedToday ? (name ? `Feierabend, ${name}` : "Feierabend") : name ? `${greeting}, ${name}` : "Dein Arbeitstag";
   }
 
   function renderDashboard() {
@@ -240,7 +293,7 @@
       return d >= monday && d <= weekCutoff;
     });
     const weekWorked = weekEntries.reduce((sum, entry) => sum + entry.worked_minutes, 0);
-    const weekAccount = weekEntries.reduce((sum, entry) => sum + entry.account_minutes, 0);
+    const weekAccount = weekEntries.filter(countsForAccount).reduce((sum, entry) => sum + entry.account_minutes, 0);
     const weekTarget = targetBetween(monday, sunday, false);
     const balance = weekAccount - targetBetween(monday, weekCutoff);
     const percent = Math.min(100, Math.round(weekWorked / Math.max(1, weekTarget) * 100));
@@ -287,6 +340,8 @@
         todayBox.innerHTML = `<div class="today-entry-head"><div class="entry-type-badge type-${escapeHTML(entry.type)}">${escapeHTML(entry.type)}</div><div><b>${escapeHTML(entry.type_label)}</b><span>${escapeHTML(detail)}</span></div></div>`;
       }
       $("#openTodayEntry").textContent = "Manuell bearbeiten";
+      if (entry.automatic_holiday) $("#openTodayEntry").textContent = "Im Kalender öffnen";
+      if (entry.note) todayBox.insertAdjacentHTML("beforeend", `<div class="day-note-display">${renderNoteHTML(entry.note)}</div>`);
     } else {
       todayBox.className = "empty-inline";
       todayBox.innerHTML = `<div class="empty-icon"><svg aria-hidden="true"><use href="#i-clock"></use></svg></div><div><b>Noch kein Eintrag</b><span>${selectedIsToday ? "Starte den Timer oder trage den Tag manuell ein." : "Für diesen Tag wurde keine Arbeitszeit gespeichert."}</span></div>`;
@@ -306,7 +361,7 @@
     const yearStart = new Date(year, 0, 1);
     const balanceEnd = selectedDay > today ? today : selectedDay;
     const carry = year === today.getFullYear() ? Number(state.settings.previous_balance_minutes || 0) : 0;
-    const yearBalance = yearEntries.filter(entry => entry.work_date <= isoDate(balanceEnd)).reduce((sum, entry) => sum + entry.account_minutes, 0) - targetBetween(yearStart, balanceEnd) + carry;
+    const yearBalance = yearEntries.filter(entry => entry.work_date <= isoDate(balanceEnd) && countsForAccount(entry)).reduce((sum, entry) => sum + entry.account_minutes, 0) - targetBetween(yearStart, balanceEnd) + carry;
     $("#sidebarBalance").textContent = formatSigned(yearBalance);
     $("#balanceChip").classList.toggle("negative", yearBalance < 0);
     $("#balanceChip").classList.toggle("positive", yearBalance > 0);
@@ -366,30 +421,34 @@
     const card = $(".timer-card");
     const active = state.active;
     const lastTimed = state.todayEntries.find(entry => ["B", "H"].includes(entry.type));
-    const completedEntry = state.todayEntries.find(entry => entry.type === "X") || (lastTimed?.finalized ? lastTimed : null);
+    const completedEntry = state.todayEntries.find(entry => ["X", "FT", "U", "S", "K", "F", "A"].includes(entry.type)) || (lastTimed?.finalized ? lastTimed : null);
     const finished = !active && Boolean(completedEntry);
     card.classList.toggle("hidden", finished);
     $("#finishedCard").classList.toggle("hidden", !finished);
+    $("#openDayPlan").classList.toggle("hidden", finished);
     if (finished) {
-      renderFinishedCard(completedEntry);
+      if (["B", "H", "X"].includes(completedEntry.type)) renderFinishedCard(completedEntry);
+      else renderFreeDayCard(completedEntry);
       return;
     }
     card.classList.toggle("running", Boolean(active));
     card.classList.toggle("paused", Boolean(active?.is_paused));
     $("#timerTypePicker").classList.toggle("locked", Boolean(active));
     updateTimerButtons();
-    $("#metaTarget").textContent = formatDuration(targetPerDay(active?.work_date || new Date()));
+    $("#metaTarget").textContent = formatDuration(plannedTarget(active?.work_date || new Date()));
+    $("#metaTargetLabel").textContent = overtimeForDay(active?.work_date || new Date()) ? "Tagesplan" : "Tagesziel";
+    $("#timerOrbit span").textContent = overtimeForDay(active?.work_date || new Date()) ? "Tagesplan" : "Tagesziel";
     if (!active) {
       $("#timerStatus").textContent = lastTimed ? "Arbeit gestoppt" : "Bereit";
       $("#workTimerValue").textContent = formatClock(lastTimed?.net_work_seconds || 0);
       $("#breakTimerValue").textContent = formatClock(lastTimed?.recorded_break_seconds || 0);
-      $("#workTimerHint").textContent = lastTimed ? "Arbeitszeit gespeichert" : "Noch nicht gestartet";
+      $("#workTimerHint").textContent = lastTimed ? "Arbeitszeit gespeichert" : overtimeForDay() ? `Heute ${formatDuration(overtimeForDay())} Std. zusätzlich geplant` : "Noch nicht gestartet";
       $("#breakTimerHint").textContent = lastTimed?.recorded_break_seconds ? "Pausen heute" : "Noch keine Pause";
       $("#timerSubline").textContent = lastTimed ? "Abgeschlossen" : "Nicht gestartet";
       $("#metaStart").textContent = lastTimed?.start_time?.slice(0, 5) || "–";
       $("#metaEnd").textContent = lastTimed?.end_time?.slice(0, 5) || "–";
       $("#startTimer").innerHTML = `<svg aria-hidden="true"><use href="#i-play"></use></svg>Arbeit starten`;
-      updateTimerProgress(lastTimed?.net_work_seconds || 0, targetPerDay(new Date()));
+      updateTimerProgress(lastTimed?.net_work_seconds || 0, plannedTarget());
       return;
     }
     state.selectedTimerType = active.type;
@@ -397,7 +456,7 @@
     $$("#timerTypePicker button").forEach(button => button.classList.toggle("active", button.dataset.type === active.type));
     const tick = () => {
       const values = liveTimerValues();
-      const remainingSeconds = Math.max(0, targetPerDay(active.work_date) * 60 - values.netSeconds);
+      const remainingSeconds = Math.max(0, plannedTarget(active.work_date) * 60 - values.netSeconds);
       $("#workTimerValue").textContent = formatClock(values.netSeconds);
       $("#breakTimerValue").textContent = formatClock(values.breakSeconds);
       $("#timerStatus").textContent = active.is_paused ? "Pause läuft" : "Arbeitszeit läuft";
@@ -405,16 +464,25 @@
       $("#metaStart").textContent = active.start_time.slice(0, 5);
       $("#metaEnd").textContent = "läuft";
       $("#workTimerHint").textContent = remainingSeconds
-        ? `Noch ${formatClock(remainingSeconds).slice(0, 5)} bis zum Tagesziel`
-        : "Tagesziel erreicht";
+        ? `Noch ${formatClock(remainingSeconds).slice(0, 5)} bis zum ${overtimeForDay(active.work_date) ? "Tagesplan" : "Tagesziel"}`
+        : overtimeForDay(active.work_date) ? "Überstundenplan geschafft" : "Tagesziel erreicht";
       $("#breakTimerHint").textContent = active.is_paused ? "Gesamte Pause läuft weiter" : values.breakSeconds ? "Pause heute gesamt" : "Noch keine Pause";
       $("#todayEarnings").textContent = formatMoney(grossForMinutes(active.work_date, values.netSeconds / 60));
-      updateTimerProgress(values.netSeconds, targetPerDay(active.work_date));
+      updateTimerProgress(values.netSeconds, plannedTarget(active.work_date));
+      $("#timerOrbit span").textContent = overtimeForDay(active.work_date) ? "Tagesplan" : "Tagesziel";
     };
     tick(); state.ticker = setInterval(tick, 1000);
   }
 
   function renderFinishedCard(entry) {
+    $("#finishedCard").classList.remove("day-off");
+    $("#finishedCard .finished-eyebrow > span:last-child").textContent = "Arbeitstag abgeschlossen";
+    $("#finishedCard .finished-goal").classList.remove("hidden");
+    $("#finishedCard .finished-facts").classList.remove("hidden");
+    $("#finishedNote").classList.remove("hidden");
+    $("#dayNoteEntryId").value = entry.id;
+    $("#dayNoteText").value = entry.note || "";
+    $("#dayNoteSummary").textContent = entry.note ? "Tagesnotiz ansehen oder bearbeiten" : "Tagesnotiz hinzufügen";
     const target = targetPerDay(entry.work_date);
     const delta = entry.worked_minutes - target;
     const isX = entry.type === "X";
@@ -437,6 +505,50 @@
       : delta >= 0
       ? `Tagesziel geschafft${delta > 0 ? ` · ${formatDuration(delta)} darüber` : ""}. Deine Zeit ist sicher gespeichert.`
       : `${formatDuration(-delta)} bis zum Tagesziel. Deine Zeit ist sicher gespeichert.`;
+  }
+
+  function renderFreeDayCard(entry) {
+    $("#finishedCard").classList.add("day-off");
+    $("#finishedCard .finished-eyebrow > span:last-child").textContent = "Heute keine Zeiterfassung nötig";
+    $("#finishedLead").textContent = entry.automatic_holiday ? "Automatischer Feiertag" : "Arbeitsfreier Tag";
+    $("#finishedDuration").textContent = entry.holiday_name || entry.type_label;
+    $("#finishedUnit").textContent = "Zeit für dich";
+    $("#finishedMessage").textContent = entry.type === "U" ? "Dein Urlaub ist eingetragen. Genieße die freie Zeit." : `${formatDuration(entry.credited_minutes || 0)} Std. berücksichtigt · kein Urlaubstag verbraucht.`;
+    $("#finishedCard .finished-goal").classList.add("hidden");
+    $("#finishedCard .finished-facts").classList.add("hidden");
+    $("#finishedNote").classList.add("hidden");
+  }
+
+  async function saveDayNote(event) {
+    event.preventDefault();
+    try {
+      await api(`api/entries/${$("#dayNoteEntryId").value}/note`, { method: "POST", body: JSON.stringify({ note: $("#dayNoteText").value }) });
+      $("#dayNoteStatus").textContent = "Gespeichert";
+      await loadYear(state.loadedYear, true);
+      toast("Tagesnotiz gespeichert");
+    } catch (error) { toast(error.message, true); }
+  }
+
+  function updateDayPlanPreview() {
+    const base = targetPerDay();
+    const extra = minutesFromTime($("#dayPlanExtra").value);
+    $("#dayPlanPreview").innerHTML = `<span>Vertragliches Soll <b>${formatDuration(base)}</b></span><span>Zusätzlich geplant <b>+ ${formatDuration(extra)}</b></span><span>Dein Tagesplan <b>${formatDuration(base + extra)} Std.</b></span>`;
+  }
+
+  function openDayPlan() {
+    $("#dayPlanExtra").value = formatHoursMinutes(overtimeForDay());
+    updateDayPlanPreview();
+    $("#dayPlanDialog").showModal();
+  }
+
+  async function saveDayPlan(event) {
+    event.preventDefault();
+    try {
+      await api("api/day-plan", { method: "POST", body: JSON.stringify({ work_date: isoDate(new Date()), extra_minutes: minutesFromTime($("#dayPlanExtra").value) }) });
+      $("#dayPlanDialog").close();
+      await loadYear(state.loadedYear, true);
+      toast("Tagesplan gespeichert");
+    } catch (error) { toast(error.message, true); }
   }
 
   function renderVacationCountdown() {
@@ -520,9 +632,13 @@
       : entry.type === "X"
         ? [["Tagesziel", formatDuration(target)], ["Zusätzlich", formatDuration(entry.extra_work_minutes || 0)], ["Verbucht", formatDuration(entry.worked_minutes)], ["Zeitkonto", formatSigned(entry.account_minutes - target)]]
         : [["Tagesziel", formatDuration(target)], ["Als Arbeit", "0:00"], ["Urlaubstage", entry.type === "U" ? "1" : "0"], ["Zeitkonto", formatSigned(entry.account_minutes - target)]];
-    const note = entry.note ? `<p class="calendar-day-note">${escapeHTML(entry.note)}</p>` : "";
+    const note = entry.note ? `<div class="calendar-day-note">${renderNoteHTML(entry.note)}</div>` : "";
     const earned = entry.estimated_gross_eur ? `<div class="calendar-day-earned"><span>Brutto für diesen Tag (geschätzt)</span><b>${formatMoney(entry.estimated_gross_eur)}</b></div>` : "";
     $("#calendarDayContent").innerHTML = `<div class="calendar-day-state"><span class="calendar-day-symbol type-${escapeHTML(entry.type)}">${escapeHTML(entry.type)}</span><div><b>${escapeHTML(entry.type_label)}</b><p>${timed ? entry.is_running ? "Zeiterfassung läuft" : "Arbeitszeit gespeichert" : entry.type === "X" ? "Tagesziel erfüllt" : "Als freier Tag berücksichtigt"}</p></div></div><div class="calendar-day-facts">${facts.map(([label, value]) => `<div><span>${escapeHTML(label)}</span><strong>${escapeHTML(value)}</strong></div>`).join("")}</div>${earned}${note}`;
+    if (entry.automatic_holiday) {
+      $("#editCalendarDay").textContent = "Feiertag ausschließen";
+      $("#calendarDayContent").insertAdjacentHTML("beforeend", '<p class="settings-section-copy">Automatisch berücksichtigt. Ausschließen entfernt nur den Feiertag; vorhandene Einträge bleiben erhalten.</p>');
+    }
   }
 
   async function openCalendarDay(day) {
@@ -576,7 +692,7 @@
     $("#csvExport").href = `api/export.csv?year=${year}`;
     const worked = state.entries.reduce((sum, entry) => sum + entry.worked_minutes, 0);
     const todayKey = isoDate(new Date());
-    const account = state.entries.filter(entry => entry.work_date <= todayKey).reduce((sum, entry) => sum + entry.account_minutes, 0);
+    const account = state.entries.filter(entry => entry.work_date <= todayKey && countsForAccount(entry)).reduce((sum, entry) => sum + entry.account_minutes, 0);
     const yearStart = new Date(year, 0, 1);
     const yearEnd = new Date(year, 11, 31);
     const target = year > new Date().getFullYear() ? 0 : targetBetween(yearStart, yearEnd, year === new Date().getFullYear());
@@ -634,7 +750,7 @@
     $("#monthList").innerHTML = MONTHS.map((name, month) => {
       const entries = state.entries.filter(entry => parseISO(entry.work_date).getMonth() === month);
       const actual = entries.reduce((sum, entry) => sum + entry.worked_minutes, 0);
-      const account = entries.filter(entry => entry.work_date <= todayKey).reduce((sum, entry) => sum + entry.account_minutes, 0);
+      const account = entries.filter(entry => entry.work_date <= todayKey && countsForAccount(entry)).reduce((sum, entry) => sum + entry.account_minutes, 0);
       const first = new Date(year, month, 1), last = new Date(year, month + 1, 0);
       const monthTarget = targetBetween(first, last, year === currentYear);
       const saldo = account - monthTarget;
@@ -652,8 +768,14 @@
     targets.forEach((value, index) => { $(`#settingDay${index}`).value = formatHoursMinutes(value); });
     $("#settingAge").value = s.age_group;
     $("#settingStartDate").value = s.tracking_start_date || isoDate(new Date());
+    state.vacationAllowancesDraft = { ...(s.vacation_allowance_by_year || {}) };
+    state.vacationYearDirty = false;
+    const thisYear = new Date().getFullYear();
+    const years = [...new Set([thisYear - 1, thisYear, thisYear + 1, thisYear + 2, state.vacationYear, ...Object.keys(state.vacationAllowancesDraft).map(Number)])].sort((a, b) => a - b);
+    $("#settingVacationYear").innerHTML = years.map(year => `<option value="${year}">${year}${year === thisYear ? " · Dieses Jahr" : ""}</option>`).join("");
     $("#settingVacationYear").value = state.vacationYear;
     $("#settingVacation").value = vacationAllowance(state.vacationYear);
+    $("#settingVacationDefault").value = Number(s.vacation_allowance || 0);
     $("#settingMonthlyGross").value = Number(s.monthly_gross_eur || 0);
     $("#settingCarry").value = s.vacation_carryover;
     $("#settingBalance").value = s.previous_balance_minutes;
@@ -663,6 +785,9 @@
     $("#settingMilestoneStyle").value = s.milestone_notification_style || "saying_money";
     $("#settingGoalNotification").checked = s.goal_notification_enabled !== false;
     $("#settingEndSummary").checked = s.end_summary_enabled !== false;
+    [["settingStartNotification", "start_notification_enabled"], ["settingPauseMinimum", "pause_minimum_notification_enabled"], ["settingPauseReminder", "pause_reminder_enabled"], ["settingEndSoon", "end_soon_notification_enabled"], ["settingOvertimeNotification", "overtime_notification_enabled"], ["settingHolidays", "holidays_enabled"]].forEach(([id, key]) => { $(`#${id}`).checked = Boolean(s[key]); });
+    $("#settingHolidayState").innerHTML = '<option value="">Bundesland wählen</option>' + Object.entries(GERMAN_STATES).map(([code, name]) => `<option value="${code}">${name}</option>`).join("");
+    $("#settingHolidayState").value = s.holiday_state || "";
     $("#settingLiveService").value = s.live_activity_service || "";
     const theme = ["system", "light", "dark"].includes(s.theme) ? s.theme : "system";
     const themeInput = $(`input[name="theme"][value="${theme}"]`);
@@ -670,6 +795,8 @@
     applyTheme(theme);
     updateSettingsControls();
     renderNotificationExamples();
+    renderVacationSettings();
+    renderHolidaySettings();
     const finishedToday = state.todayEntries.find(entry => ["B", "H"].includes(entry.type) && entry.finalized);
     $("#reopenTimer").disabled = !finishedToday;
     $("#reopenHint").textContent = finishedToday
@@ -690,6 +817,60 @@
     const milestoneStyle = $("#settingMilestoneStyle");
     milestoneStyle.disabled = !$("#settingMilestones").checked;
     milestoneStyle.closest(".milestone-style-field")?.classList.toggle("is-disabled", milestoneStyle.disabled);
+    $("#settingHolidayState").disabled = !$("#settingHolidays").checked;
+    $("#refreshHolidays").disabled = !$("#settingHolidays").checked || $("#settingHolidayState").value !== state.settings.holiday_state || !state.settings.holidays_enabled;
+  }
+
+  function renderVacationSettings() {
+    const year = state.vacationYear;
+    const used = state.vacationPeriods.flatMap(period => period.dates || []).filter(day => day.startsWith(String(year))).length;
+    const carry = year === new Date().getFullYear() ? Number($("#settingCarry").value || 0) : 0;
+    const allowance = Number($("#settingVacation").value || 0) + carry;
+    $("#vacationSettingsBudget").innerHTML = `<div><strong>${Math.max(0, allowance - used)}</strong><span>Tage übrig</span></div><div><b>${used}</b><span>eingetragen</span></div><div><b>${allowance}</b><span>verfügbar ${year}</span></div>`;
+    const periods = state.vacationPeriods.filter(period => (period.dates || []).some(day => day.startsWith(String(year))));
+    $("#settingsVacationList").innerHTML = periods.length ? '<h3>Deine Urlaubszeiträume</h3>' + periods.map(period => {
+      const format = day => new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "short", year: "numeric" }).format(parseISO(day));
+      return `<article class="vacation-period"><div><b>${escapeHTML(format(period.start_date))}${period.start_date !== period.end_date ? ` – ${escapeHTML(format(period.end_date))}` : ""}</b><span>${period.workdays} Urlaubstage${period.note ? ` · ${escapeHTML(period.note)}` : ""}</span></div><div class="vacation-period-actions"><button type="button" class="text-action" data-vacation-open="${period.start_date}">Ansehen</button><button type="button" class="text-action remove-vacation" data-vacation-from="${period.start_date}" data-vacation-to="${period.end_date}">Entfernen</button></div></article>`;
+    }).join("") : '<p class="settings-section-copy">Noch kein Urlaub für dieses Jahr eingetragen. Plane gleich einen Zeitraum.</p>';
+    $$("[data-vacation-open]").forEach(button => button.addEventListener("click", () => { setView("calendar"); openCalendarDay(button.dataset.vacationOpen); }));
+    $$("[data-vacation-from]").forEach(button => button.addEventListener("click", async () => {
+      if (!confirm("Diesen Urlaubszeitraum entfernen? Andere Tagestypen und Feiertage bleiben erhalten.")) return;
+      try {
+        await api("api/vacation/remove", { method: "POST", body: JSON.stringify({ start_date: button.dataset.vacationFrom, end_date: button.dataset.vacationTo }) });
+        await loadYear(state.loadedYear, true, true);
+        toast("Urlaubszeitraum entfernt");
+      } catch (error) { toast(error.message, true); }
+    }));
+  }
+
+  function renderHolidaySettings() {
+    const info = state.holidays;
+    $("#holidayYearLabel").textContent = info?.year || state.loadedYear;
+    $("#holidayLoadStatus").textContent = !state.settings.holidays_enabled ? "Wähle dein Bundesland, aktiviere den Schalter und speichere die Einstellungen." : info?.error || (info?.fetched_at ? `${info.state_name} · ${info.holidays.length} Feiertage gespeichert. Einzelne Ausnahmen werden sofort gespeichert.` : "Noch keine Feiertage geladen. Bitte aktualisieren.");
+    const excluded = new Set(state.settings.holiday_exclusions || []);
+    $("#settingsHolidayList").innerHTML = (info?.holidays || []).map(item => `<div class="holiday-row ${excluded.has(item.date) ? "is-excluded" : ""}"><div><b>${escapeHTML(item.name)}</b><small>${new Intl.DateTimeFormat("de-DE", { weekday: "short", day: "2-digit", month: "2-digit" }).format(parseISO(item.date))}${excluded.has(item.date) ? " · ausgeschlossen" : ""}</small></div><button type="button" class="text-action" data-holiday-date="${item.date}" data-excluded="${excluded.has(item.date) ? "false" : "true"}">${excluded.has(item.date) ? "Wieder nutzen" : "Ausschließen"}</button></div>`).join("") || '<p class="settings-section-copy">Keine gespeicherten Feiertage.</p>';
+    $$("[data-holiday-date]").forEach(button => button.addEventListener("click", () => saveHolidayException(button.dataset.holidayDate, button.dataset.excluded === "true")));
+  }
+
+  async function saveHolidayException(day, excluded) {
+    try {
+      await api("api/holidays/exception", { method: "POST", body: JSON.stringify({ work_date: day, excluded }) });
+      await loadYear(state.loadedYear, true, true);
+      if ($("#calendarDayDialog").open) renderCalendarDay();
+      toast(excluded ? "Feiertag ausgeschlossen" : "Feiertag wieder berücksichtigt");
+    } catch (error) { toast(error.message, true); }
+  }
+
+  async function refreshHolidayList() {
+    const button = $("#refreshHolidays");
+    button.disabled = true;
+    try {
+      const result = await api("api/holidays/refresh", { method: "POST", body: JSON.stringify({ year: state.loadedYear }) });
+      state.holidays = result.holidays;
+      await loadYear(state.loadedYear, true, true);
+      toast(result.holidays.error || "Feiertage aktualisiert", Boolean(result.holidays.error));
+    } catch (error) { toast(error.message, true); }
+    finally { updateSettingsControls(); }
   }
 
   function renderNotificationExamples() {
@@ -710,6 +891,7 @@
     });
     preview.push(`<div class="notification-example"><span class="notification-example-icon"><svg aria-hidden="true"><use href="#i-shield"></use></svg></span><span><b>Zeitwerk · Tagesziel erreicht</b><small>Dein Soll von ${escapeHTML(formatDuration(target))} Std. ist geschafft. Ab jetzt sammelst du Pluszeit.</small></span></div>`);
     preview.push(`<div class="notification-example"><span class="notification-example-icon"><svg aria-hidden="true"><use href="#i-sun"></use></svg></span><span><b>Zeitwerk · Feierabend</b><small>Beispiel: Heute +00:30 zum Soll · Konto −01:15${monthly > 0 ? ` · ${escapeHTML(formatMoney(grossForMinutes(new Date(), target, monthly)))} brutto` : ""}</small></span></div>`);
+    [["Pausenziel erreicht", "30 Minuten anrechenbare Pause geschafft. Du kannst weiter pausieren oder entspannt weiterarbeiten."], ["Zeit für eine Pause", "Für deine Arbeitszeit sind 30 Minuten Pause nötig. Bisher sind 15 Minuten anrechenbar."], ["Feierabend in Sicht", "Noch höchstens 15 Minuten bis zu deinem Tagesplan. Zeit, die letzten Aufgaben abzurunden."], ["Überstundenplan geschafft", "Deine geplanten 1:00 Std. zusätzlich sind erreicht."], ["Arbeitszeit gestartet", "Dein Tagesplan steht. Gute Arbeit und einen angenehmen Tag!"]].forEach(([title, message]) => preview.push(`<div class="notification-example"><span class="notification-example-icon"><svg><use href="#i-info"></use></svg></span><span><b>Zeitwerk · ${title}</b><small>${message}</small></span></div>`));
     $("#notificationExamples").innerHTML = preview.join("");
   }
 
@@ -732,7 +914,7 @@
     const dayEntries = entriesOn(dateValue);
     const existing = entryId ? state.entries.find(item => item.id === entryId) : dayEntries.find(item => ["B", "H"].includes(item.type)) || dayEntries[0];
     $("#entryDialogTitle").textContent = existing ? "Arbeitszeit korrigieren" : "Arbeitszeit nachtragen";
-    $("#entryId").value = existing?.id || "";
+    $("#entryId").value = existing?.automatic_holiday ? "" : existing?.id || "";
     $("#entryDate").value = existing?.work_date || dateValue;
     const type = existing?.type || "B";
     const typeInput = $(`input[name="entryType"][value="${type}"]`);
@@ -742,7 +924,7 @@
     $("#entryBreak").value = formatHoursMinutes(existing?.recorded_break_minutes ?? 30);
     $("#entryCommute").checked = Boolean(existing?.commute);
     $("#entryNote").value = existing?.note || "";
-    $("#deleteEntry").classList.toggle("hidden", !existing);
+    $("#deleteEntry").classList.toggle("hidden", !existing || existing.automatic_holiday);
     toggleTimedFields(type);
     $("#entryDialog").showModal();
   }
@@ -757,7 +939,7 @@
   }
 
   async function timerAction(action) {
-    if (action === "stop" && !window.confirm("Arbeitstag wirklich abschließen? Danach ist der Timer für heute gesperrt. Falls nötig, kannst du ihn nur unter Einstellungen → Daten & Sicherung → Erweiterte Korrekturen wieder öffnen.")) return;
+    if (action === "stop" && !window.confirm("Arbeitstag jetzt abschließen? Deine Endzeit wird gespeichert.")) return;
     setTimerBusy(true);
     try {
       const payload = action === "start" ? { type: state.selectedTimerType } : {};
@@ -793,7 +975,8 @@
     } catch (error) { toast(error.message, true); }
   }
 
-  function openVacationDialog(day = isoDate(new Date())) {
+  function openVacationDialog(day = isoDate(new Date()), returnView = "calendar") {
+    state.vacationReturnView = returnView;
     $("#vacationStart").value = day;
     $("#vacationEnd").value = day;
     $("#vacationNote").value = "";
@@ -846,12 +1029,15 @@
       return;
     }
     let workdays = 0;
+    const holidayDays = new Set(state.settings.holidays_enabled ? (state.holidays?.holidays || []).filter(item => !(state.settings.holiday_exclusions || []).includes(item.date)).map(item => item.date) : []);
     for (let index = 0; index < days; index++) {
       const day = parseISO(first); day.setDate(day.getDate() + index);
-      if (targetPerDay(day) > 0) workdays++;
+      const key = isoDate(day);
+      if (targetPerDay(day) > 0 && !holidayDays.has(key) && !entriesOn(key).some(entry => entry.type === "FT")) workdays++;
     }
     box.classList.remove("warning");
-    box.textContent = `Bis zu ${workdays} ${workdays === 1 ? "Arbeitstag" : "Arbeitstage"} als Urlaub · ${days - workdays} laut Arbeitsmodell frei. Bereits eingetragene freie Tage werden zusätzlich ausgelassen.`;
+    const knownYear = first.slice(0, 4) === String(state.loadedYear) && last.slice(0, 4) === String(state.loadedYear);
+    box.textContent = `${knownYear ? "" : "Voraussichtlich "}${workdays} ${workdays === 1 ? "Urlaubstag" : "Urlaubstage"} · ${days - workdays} freie Tage oder bekannte Feiertage.${knownYear ? "" : " Weitere Feiertage werden beim Speichern geprüft."}`;
   }
 
   async function saveVacationRange(event) {
@@ -860,10 +1046,11 @@
     try {
       const result = await api("api/vacation/range", { method: "POST", body: JSON.stringify(payload) });
       $("#vacationDialog").close();
-      toast(result.added ? `${result.added} Urlaubstage eingetragen${result.free_days ? ` · ${result.free_days} freie Tage ausgelassen` : ""}` : "Diese Urlaubstage waren bereits eingetragen");
+      toast(result.added ? `${result.added} ${result.added === 1 ? "Urlaubstag" : "Urlaubstage"} eingetragen${result.free_days ? ` · ${result.free_days} ${result.free_days === 1 ? "freier Tag" : "freie Tage"} ausgelassen` : ""}` : "Diese Urlaubstage waren bereits eingetragen");
       state.calendarDate = new Date(parseISO(payload.start_date).getFullYear(), parseISO(payload.start_date).getMonth(), 1);
-      await loadYear(parseISO(payload.start_date).getFullYear(), true);
-      setView("calendar");
+      const returnView = state.vacationReturnView || "calendar";
+      await loadYear(parseISO(payload.start_date).getFullYear(), true, returnView === "settings");
+      setView(returnView);
     } catch (error) { toast(error.message, true); }
   }
 
@@ -917,7 +1104,8 @@
     const workdays = targets.map((value, index) => value > 0 ? index : null).filter(value => value !== null);
     if (!workdays.length) return toast("Bitte mindestens für einen Tag eine Arbeitszeit festlegen", true);
     const vacationYear = String(Number($("#settingVacationYear").value));
-    const vacationValues = { ...(state.settings.vacation_allowance_by_year || {}), [vacationYear]: Number($("#settingVacation").value) };
+    const vacationValues = { ...state.vacationAllowancesDraft };
+    if (state.vacationYearDirty) vacationValues[vacationYear] = Number($("#settingVacation").value);
     const payload = {
       display_name: $("#settingName").value.trim(),
       weekly_hours: targets.reduce((sum, value) => sum + value, 0) / 60,
@@ -925,7 +1113,7 @@
       daily_work_minutes: targets,
       age_group: $("#settingAge").value,
       tracking_start_date: $("#settingStartDate").value,
-      vacation_allowance: Number($("#settingVacation").value),
+      vacation_allowance: Number($("#settingVacationDefault").value),
       vacation_allowance_by_year: vacationValues,
       vacation_carryover: Number($("#settingCarry").value),
       monthly_gross_eur: Number($("#settingMonthlyGross").value),
@@ -938,6 +1126,13 @@
       milestone_notification_style: $("#settingMilestoneStyle").value,
       goal_notification_enabled: $("#settingGoalNotification").checked,
       end_summary_enabled: $("#settingEndSummary").checked,
+      start_notification_enabled: $("#settingStartNotification").checked,
+      pause_minimum_notification_enabled: $("#settingPauseMinimum").checked,
+      pause_reminder_enabled: $("#settingPauseReminder").checked,
+      end_soon_notification_enabled: $("#settingEndSoon").checked,
+      overtime_notification_enabled: $("#settingOvertimeNotification").checked,
+      holidays_enabled: $("#settingHolidays").checked,
+      holiday_state: $("#settingHolidayState").value,
     };
     try {
       await api("api/settings", { method: "POST", body: JSON.stringify(payload) });
@@ -979,7 +1174,10 @@
     $$("[data-go]").forEach(button => button.addEventListener("click", () => setView(button.dataset.go)));
     ["#openEntry", "#mobileAdd"].forEach(selector => $(selector).addEventListener("click", () => { state.entryReturnView = null; openEntryDialog(state.selectedDay); }));
     $("#manualAdjust").addEventListener("click", () => { state.entryReturnView = null; openEntryDialog(); });
-    $("#openTodayEntry").addEventListener("click", () => { state.entryReturnView = null; openEntryDialog(state.selectedDay); });
+    $("#openTodayEntry").addEventListener("click", () => {
+      if (entriesOn(state.selectedDay)[0]?.automatic_holiday) return openCalendarDay(state.selectedDay);
+      state.entryReturnView = null; openEntryDialog(state.selectedDay);
+    });
     $("#prevDay").addEventListener("click", () => moveSelectedDay(-1));
     $("#nextDay").addEventListener("click", () => moveSelectedDay(1));
     $("#jumpToday").addEventListener("click", () => selectDay(new Date()));
@@ -987,6 +1185,13 @@
     $("#pauseTimer").addEventListener("click", () => timerAction("pause"));
     $("#resumeTimer").addEventListener("click", () => timerAction("resume"));
     $("#stopTimer").addEventListener("click", () => timerAction("stop"));
+    $("#openDayPlan").addEventListener("click", openDayPlan);
+    $("#dayPlanForm").addEventListener("submit", saveDayPlan);
+    $("#dayPlanExtra").addEventListener("input", updateDayPlanPreview);
+    ["#closeDayPlan", "#cancelDayPlan"].forEach(selector => $(selector).addEventListener("click", () => $("#dayPlanDialog").close()));
+    $("#dayNoteForm").addEventListener("submit", saveDayNote);
+    $("#dayNoteText").addEventListener("input", () => { $("#dayNoteStatus").textContent = ""; });
+    ["#dayNoteText", "#entryNote", "#vacationNote"].forEach(selector => $(selector).addEventListener("keydown", continueBulletList));
     $("#reopenTimer").addEventListener("click", reopenTimer);
     $("#saveXExtra").addEventListener("click", saveXExtra);
     $("#xExtraDate").addEventListener("change", () => {
@@ -997,12 +1202,14 @@
     $("#calendarDayPrev").addEventListener("click", () => moveCalendarDay(-1));
     $("#calendarDayNext").addEventListener("click", () => moveCalendarDay(1));
     $("#editCalendarDay").addEventListener("click", () => {
+      if (entriesOn(state.calendarDay)[0]?.automatic_holiday) return saveHolidayException(state.calendarDay, true);
       $("#calendarDayDialog").close();
       state.entryReturnView = "calendar";
       openEntryDialog(state.calendarDay);
     });
     $("#openVacationHome").addEventListener("click", () => openVacationDialog(isoDate(new Date())));
     $("#openVacationCalendar").addEventListener("click", () => openVacationDialog(calendarFocusDay()));
+    $("#openVacationSettings").addEventListener("click", () => openVacationDialog(isoDate(new Date()), "settings"));
     $("#openDayOffCalendar").addEventListener("click", () => openDayOffDialog());
     $("#dayOffForm").addEventListener("submit", saveDayOff);
     $("#cancelDayOff").addEventListener("click", () => $("#dayOffDialog").close());
@@ -1050,9 +1257,21 @@
     }));
     $("#settingMonthlyGross").addEventListener("input", renderNotificationExamples);
     $("#settingVacationYear").addEventListener("change", event => {
+      event.stopPropagation();
+      if (state.vacationYearDirty) state.vacationAllowancesDraft[String(state.vacationYear)] = Number($("#settingVacation").value);
       state.vacationYear = Number(event.target.value) || new Date().getFullYear();
-      $("#settingVacation").value = vacationAllowance(state.vacationYear);
+      state.vacationYearDirty = false;
+      $("#settingVacation").value = state.vacationAllowancesDraft[String(state.vacationYear)] ?? Number($("#settingVacationDefault").value);
+      renderVacationSettings();
     });
+    $("#settingVacation").addEventListener("input", () => { state.vacationYearDirty = true; renderVacationSettings(); });
+    $("#settingCarry").addEventListener("input", renderVacationSettings);
+    $("#settingVacationDefault").addEventListener("input", () => {
+      if (!state.vacationYearDirty && state.vacationAllowancesDraft[String(state.vacationYear)] === undefined) $("#settingVacation").value = $("#settingVacationDefault").value;
+      renderVacationSettings();
+    });
+    $("#settingHolidayState").addEventListener("change", updateSettingsControls);
+    $("#refreshHolidays").addEventListener("click", refreshHolidayList);
     $("#testLiveActivity").addEventListener("click", testLiveActivity);
     $$("input[name='theme']").forEach(input => input.addEventListener("change", () => applyTheme(input.value)));
     $("#importFile").addEventListener("change", importBackup);

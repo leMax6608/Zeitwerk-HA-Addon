@@ -13,6 +13,7 @@ import urllib.request
 from unittest.mock import patch
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from contextlib import contextmanager
 
 
 class ZeitwerkWorkflowTests(unittest.TestCase):
@@ -46,6 +47,154 @@ class ZeitwerkWorkflowTests(unittest.TestCase):
         )
         with urllib.request.urlopen(request) as response:
             return json.load(response)
+
+    @contextmanager
+    def settings_override(self, **updates):
+        with self.module.DB_LOCK, self.module.db() as con:
+            original = list(con.execute("SELECT key,value FROM settings"))
+            for key, value in updates.items():
+                con.execute("UPDATE settings SET value=? WHERE key=?", (json.dumps(value), key))
+        try:
+            yield self.module.get_settings()
+        finally:
+            with self.module.DB_LOCK, self.module.db() as con:
+                con.execute("DELETE FROM settings")
+                con.executemany("INSERT INTO settings(key,value) VALUES(?,?)", [(row[0], row[1]) for row in original])
+
+    def test_day_note_updates_only_note_and_preserves_times(self):
+        day = "2041-02-05"
+        result = self.request("api/entries", {"work_date": day, "type": "B", "start_time": "08:00", "end_time": "16:30", "break_duration": "00:30"})
+        entry = result["entry"]
+        try:
+            note = "- Entwurf fertig\n- Feedback besprochen\n\nMorgen: weiterarbeiten."
+            self.request(f"api/entries/{entry['id']}/note", {"note": note})
+            updated = self.request(f"api/state?from={day}&to={day}")["entries"][0]
+            self.assertEqual(updated["note"], note)
+            for field in ("start_time", "end_time", "recorded_break_minutes", "worked_minutes", "finalized"):
+                self.assertEqual(updated[field], entry[field])
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                self.request(f"api/entries/{entry['id']}/note", {"note": "a" * 2001})
+            error.exception.close()
+        finally:
+            with self.module.DB_LOCK, self.module.db() as con:
+                con.execute("DELETE FROM entries WHERE id=?", (entry["id"],))
+
+    def test_overtime_plan_is_durable_and_does_not_change_contractual_target(self):
+        day = "2041-03-04"
+        with self.settings_override(overtime_plan_by_date={}, daily_work_minutes=[480] * 7):
+            self.request("api/day-plan", {"work_date": day, "extra_minutes": 60})
+            settings = self.module.get_settings()
+            self.assertEqual(self.module.daily_target(settings, day), 480)
+            self.assertEqual(self.module.planned_target(settings, day), 540)
+            self.assertEqual(self.request("api/backup.json")["settings"]["overtime_plan_by_date"][day], 60)
+            self.module.init_db()
+            self.assertEqual(self.module.get_settings()["overtime_plan_by_date"][day], 60)
+            self.request("api/settings", {"overtime_plan_by_date": {}})
+            self.assertEqual(self.module.planned_target(self.module.get_settings(), day), 540)
+            self.request("api/day-plan", {"work_date": day, "extra_minutes": 0})
+            self.assertEqual(self.module.planned_target(self.module.get_settings(), day), 480)
+
+    def test_holiday_credits_before_tracking_start_do_not_inflate_balance(self):
+        today = date.today()
+        settings = {**self.module.DEFAULT_SETTINGS, "daily_work_minutes": [480] * 7, "tracking_start_date": today.isoformat()}
+        entries = [
+            {"work_date": (today - timedelta(days=1)).isoformat(), "type": "FT", "worked_minutes": 0, "account_minutes": 480, "estimated_gross_eur": 0},
+            {"work_date": today.isoformat(), "type": "B", "worked_minutes": 480, "account_minutes": 480, "estimated_gross_eur": 0},
+        ]
+        summary = self.module.summary_for(entries, settings, today.replace(month=1, day=1).isoformat(), today.isoformat())
+        self.assertEqual(summary["balance_minutes"], 0)
+
+    def test_pause_notifications_are_qualified_deduplicated_and_retry_failures(self):
+        day = "2041-04-08"
+        entry = self.request("api/entries", {"work_date": day, "type": "B", "start_time": "08:00", "end_time": "16:30", "break_duration": "00:30"})["entry"]
+        settings = {**self.module.DEFAULT_SETTINGS, "daily_work_minutes": [480] * 7, "live_activity_service": "mobile_app_test", "pause_minimum_notification_enabled": True}
+        item = {**entry, "is_paused": True, "qualified_break_minutes": 20, "net_work_seconds": 360 * 60}
+        try:
+            with patch.object(self.module, "call_home_assistant_notify", return_value={"ok": True}) as notify:
+                self.module.send_day_notifications(settings, item)
+                notify.assert_not_called()
+            item["qualified_break_minutes"] = 30
+            with patch.object(self.module, "call_home_assistant_notify", side_effect=[{"ok": False}, {"ok": True}]) as notify:
+                self.module.send_day_notifications(settings, item)
+                self.module.send_day_notifications(settings, item)
+                self.module.send_day_notifications(settings, item)
+                self.assertEqual(notify.call_count, 2)
+                self.assertIn("Pausenziel erreicht", notify.call_args.args[1]["title"])
+            self.module.init_db()
+            with patch.object(self.module, "call_home_assistant_notify") as notify:
+                self.module.send_day_notifications(settings, item)
+                notify.assert_not_called()
+        finally:
+            with self.module.DB_LOCK, self.module.db() as con:
+                con.execute("DELETE FROM entries WHERE id=?", (entry["id"],))
+
+    def test_automatic_holidays_skip_vacation_and_preserve_underlying_entries(self):
+        year, holiday = 2042, "2042-01-06"
+        with self.settings_override(holidays_enabled=True, holiday_state="BW", holiday_exclusions=[], daily_work_minutes=[480] * 7):
+            with self.module.DB_LOCK, self.module.db() as con:
+                con.execute("INSERT OR REPLACE INTO holiday_cache VALUES(?,?,?,?)", ("BW", year, json.dumps([{"date": holiday, "name": "Heilige Drei Könige"}]), datetime.now().isoformat()))
+            try:
+                result = self.request("api/vacation/range", {"start_date": holiday, "end_date": "2042-01-07"})
+                self.assertEqual(result["added"], 1)
+                with patch.object(self.module, "refresh_holidays", return_value=True):
+                    entries = self.request(f"api/state?from={holiday}&to=2042-01-07")["entries"]
+                automatic = next(entry for entry in entries if entry["work_date"] == holiday)
+                self.assertTrue(automatic["automatic_holiday"])
+                self.assertEqual(automatic["credited_minutes"], 480)
+                self.assertEqual(sum(entry["type"] == "U" for entry in entries), 1)
+                self.request("api/holidays/exception", {"work_date": holiday, "excluded": True})
+                self.assertFalse(any(entry["work_date"] == holiday for entry in self.module.list_entries(holiday, holiday, self.module.get_settings())))
+                manual = self.request("api/entries", {"work_date": holiday, "type": "B", "start_time": "08:00", "end_time": "16:30", "break_duration": "00:30"})["entry"]
+                self.request("api/holidays/exception", {"work_date": holiday, "excluded": False})
+                restored = self.module.list_entries(holiday, holiday, self.module.get_settings())[0]
+                self.assertEqual(restored["id"], manual["id"])
+                self.assertEqual(restored["type"], "B")
+                with patch.object(self.module, "urlopen", side_effect=urllib.error.URLError("offline")):
+                    self.assertTrue(self.module.refresh_holidays(self.module.get_settings(), year, force=True))
+                self.assertEqual(self.module.cached_holidays(self.module.get_settings(), year)[0]["date"], holiday)
+            finally:
+                with self.module.DB_LOCK, self.module.db() as con:
+                    con.execute("DELETE FROM entries WHERE work_date BETWEEN ? AND ?", (holiday, "2042-01-07"))
+                    con.execute("DELETE FROM holiday_cache WHERE state='BW' AND year=?", (year,))
+                self.module.HOLIDAY_ERRORS.pop(("BW", year), None)
+
+    def test_holiday_import_filters_local_partial_and_bavarian_special_days(self):
+        raw = [
+            {"startDate": "2036-01-01", "endDate": "2036-01-01", "name": [{"language": "DE", "text": "Neujahr"}], "regionalScope": "Regional", "temporalScope": "FullDay"},
+            {"startDate": "2036-08-08", "endDate": "2036-08-08", "name": [{"language": "DE", "text": "Lokaler Feiertag"}], "regionalScope": "Local", "temporalScope": "FullDay"},
+            {"startDate": "2036-08-15", "endDate": "2036-08-15", "name": [{"language": "DE", "text": "Mariä Himmelfahrt"}], "regionalScope": "Regional", "temporalScope": "FullDay"},
+            {"startDate": "2036-12-24", "endDate": "2036-12-24", "name": [{"language": "DE", "text": "Teilfreier Tag"}], "regionalScope": "Regional", "temporalScope": "HalfDay"},
+        ]
+        settings = {**self.module.DEFAULT_SETTINGS, "holidays_enabled": True, "holiday_state": "BY"}
+        try:
+            with patch.object(self.module, "urlopen", return_value=io.BytesIO(json.dumps(raw).encode())):
+                self.assertTrue(self.module.refresh_holidays(settings, 2036, force=True))
+            self.assertEqual(self.module.cached_holidays(settings, 2036), [{"date": "2036-01-01", "name": "Neujahr"}])
+        finally:
+            with self.module.DB_LOCK, self.module.db() as con:
+                con.execute("DELETE FROM holiday_cache WHERE state='BY' AND year=2036")
+
+    def test_existing_vacation_on_automatic_holiday_is_preserved_and_reversible(self):
+        day = "2043-01-06"
+        with self.settings_override(holiday_state="BW", holidays_enabled=True, holiday_exclusions=[], daily_work_minutes=[480] * 7):
+            entry = self.request("api/entries", {"work_date": day, "type": "U", "note": "Geplanter Urlaub"})["entry"]
+            with self.module.DB_LOCK, self.module.db() as con:
+                con.execute("INSERT OR REPLACE INTO holiday_cache VALUES(?,?,?,?)", ("BW", 2043, json.dumps([{"date": day, "name": "Heilige Drei Könige"}]), datetime.now().isoformat()))
+            try:
+                visible = self.module.list_entries(day, day, self.module.get_settings())[0]
+                self.assertEqual(visible["type"], "FT")
+                self.assertTrue(visible["automatic_holiday"])
+                self.assertFalse(any(day in period["dates"] for period in self.module.vacation_periods(self.module.get_settings())))
+                with self.module.DB_LOCK, self.module.db() as con:
+                    self.assertEqual(con.execute("SELECT type,note FROM entries WHERE id=?", (entry["id"],)).fetchone()[1], "Geplanter Urlaub")
+                self.request("api/holidays/exception", {"work_date": day, "excluded": True})
+                visible = self.module.list_entries(day, day, self.module.get_settings())[0]
+                self.assertEqual(visible["type"], "U")
+                self.assertEqual(visible["id"], entry["id"])
+            finally:
+                with self.module.DB_LOCK, self.module.db() as con:
+                    con.execute("DELETE FROM entries WHERE id=?", (entry["id"],))
+                    con.execute("DELETE FROM holiday_cache WHERE state='BW' AND year=2043")
 
     def test_notification_link_uses_actual_repository_slug(self):
         for repository, expected in (("local", "/app/local_zeitwerk"), ("a1b2c3d4", "/app/a1b2c3d4_zeitwerk")):
@@ -288,6 +437,26 @@ class ZeitwerkWorkflowTests(unittest.TestCase):
                     backup.close()
             finally:
                 os.environ["DATA_DIR"] = self.temp.name
+
+    def test_y_backup_restores_holidays_plans_and_exceptions_offline(self):
+        day = "2035-01-01"
+        with self.settings_override(holiday_state="BW", holidays_enabled=True, holiday_exclusions=[day], overtime_plan_by_date={day: 60}):
+            with self.module.DB_LOCK, self.module.db() as con:
+                con.execute("INSERT OR REPLACE INTO holiday_cache VALUES(?,?,?,?)", ("BW", 2035, json.dumps([{"date": day, "name": "Neujahr"}]), datetime.now().isoformat()))
+            backup = self.request("api/backup.json")
+            self.assertTrue(any(row["year"] == 2035 for row in backup["holiday_cache"]))
+            with self.module.DB_LOCK, self.module.db() as con:
+                con.execute("DELETE FROM holiday_cache WHERE year=2035")
+            self.request("api/import", backup)
+            restored = self.module.get_settings()
+            self.assertEqual(restored["overtime_plan_by_date"][day], 60)
+            self.assertIn(day, restored["holiday_exclusions"])
+            self.assertEqual(self.module.cached_holidays(restored, 2035)[0]["name"], "Neujahr")
+            with patch.object(self.module, "urlopen", side_effect=urllib.error.URLError("offline")):
+                self.assertTrue(self.module.refresh_holidays(restored, 2035, force=True))
+            with self.module.DB_LOCK, self.module.db() as con:
+                con.execute("DELETE FROM holiday_cache WHERE year=2035")
+            self.module.HOLIDAY_ERRORS.pop(("BW", 2035), None)
 
     def test_z_legacy_backup_import_converts_g_without_losing_context(self):
         raw = {
