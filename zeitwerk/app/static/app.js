@@ -668,6 +668,7 @@
     const themeInput = $(`input[name="theme"][value="${theme}"]`);
     if (themeInput) themeInput.checked = true;
     applyTheme(theme);
+    updateSettingsControls();
     renderNotificationExamples();
     const finishedToday = state.todayEntries.find(entry => ["B", "H"].includes(entry.type) && entry.finalized);
     $("#reopenTimer").disabled = !finishedToday;
@@ -678,6 +679,17 @@
     const selectedX = state.entries.find(entry => entry.work_date === $("#xExtraDate").value && entry.type === "X");
     if (selectedX) $("#xExtraDuration").value = formatHoursMinutes(selectedX.extra_work_minutes || 0);
     $("#settingsForm").classList.remove("is-dirty");
+  }
+
+  function updateSettingsControls() {
+    $$(".settings-panel .switch-row").forEach(row => {
+      const input = row.querySelector('input[type="checkbox"]');
+      const stateLabel = row.querySelector(".switch-state");
+      if (input && stateLabel) stateLabel.textContent = input.checked ? "An" : "Aus";
+    });
+    const milestoneStyle = $("#settingMilestoneStyle");
+    milestoneStyle.disabled = !$("#settingMilestones").checked;
+    milestoneStyle.closest(".milestone-style-field")?.classList.toggle("is-disabled", milestoneStyle.disabled);
   }
 
   function renderNotificationExamples() {
@@ -1021,12 +1033,15 @@
       $$(".settings-card.is-open").forEach(item => {
         item.classList.remove("is-open");
         item.querySelector(".settings-heading")?.setAttribute("aria-expanded", "false");
+        item.querySelector(".settings-panel")?.setAttribute("aria-hidden", "true");
       });
       section.classList.toggle("is-open", open);
       heading.setAttribute("aria-expanded", String(open));
+      section.querySelector(".settings-panel")?.setAttribute("aria-hidden", String(!open));
     }));
     $("#settingsForm").addEventListener("input", () => $("#settingsForm").classList.add("is-dirty"));
     $("#settingsForm").addEventListener("change", () => $("#settingsForm").classList.add("is-dirty"));
+    $$(".settings-panel .switch-row input[type='checkbox']").forEach(input => input.addEventListener("change", updateSettingsControls));
     $("#settingMilestoneStyle").addEventListener("change", renderNotificationExamples);
     $$("#dailyTargetGrid input").forEach(input => input.addEventListener("input", () => {
       const total = Array.from({ length: 7 }, (_, index) => minutesFromTime($(`#settingDay${index}`).value)).reduce((sum, value) => sum + value, 0);
