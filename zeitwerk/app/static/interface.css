@@ -11,6 +11,7 @@
   --brand-strong: #1559b2;
   --brand-highlight: #71a7ed;
   --brand-soft: #eaf2ff;
+  --overtime: #9665d7;
   --danger: #c43944;
   --danger-soft: #fff0f1;
   --warning: #94611c;
@@ -33,6 +34,7 @@
   --brand-strong: #a2c7ff;
   --brand-highlight: #83b4ff;
   --brand-soft: #243550;
+  --overtime: #be98f1;
   --danger: #ff9aa3;
   --danger-soft: #452b31;
   --glass: rgba(34, 37, 46, .8);
@@ -390,6 +392,14 @@ h1 { font-size: clamp(2.6rem, 4.7vw, 4rem); font-weight: 700; letter-spacing: -.
 .week-numbers > strong { font-size: 1.72rem; }
 .week-bars { grid-column: 1 / -1; height: 58px; margin-top: 4px; }
 .day-bar-track { height: 37px; }
+.week-bars .day-bar-track { position: relative; width: 12px; }
+.week-bars .day-bar-fill { background: var(--brand); min-height: 0; }
+.day-bar-overtime { position: absolute; bottom: 0; left: 0; width: 100%; min-height: 0; border-radius: inherit; background: var(--overtime); transition: height .5s cubic-bezier(.22, 1, .36, 1); }
+.has-overtime .day-bar-overtime { min-height: 2px; box-shadow: 0 -1px 0 var(--surface); }
+.week-bar-legend { grid-column: 1 / -1; display: flex; justify-content: center; flex-wrap: wrap; gap: 15px; margin-top: -2px; color: var(--muted); font-size: .66rem; }
+.week-bar-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.week-bar-legend i { width: 6px; height: 6px; border-radius: 50%; background: var(--brand); }
+.week-bar-legend .overtime-key { background: var(--overtime); }
 .mini-stats { order: 3; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; padding: 3px; border: 1px solid var(--line); border-radius: 21px; background: var(--surface); }
 .mini-stat { min-height: 70px; padding: 10px 13px; border-bottom: 1px solid var(--line); }
 .mini-stat:nth-child(odd) { border-right: 1px solid var(--line); }
@@ -652,7 +662,7 @@ dialog[open] { animation: zeitwerk-dialog-enter .28s cubic-bezier(.2, .75, .2, 1
   .vacation-budget { gap: 8px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .day-plan-button, .mobile-nav::before, .week-bars .day-bar-fill, .month-fill { transition: none !important; }
+  .day-plan-button, .mobile-nav::before, .week-bars .day-bar-fill, .day-bar-overtime, .month-fill { transition: none !important; }
 }
 @media (prefers-contrast: more) {
   :root { --muted: #3f4855; --line: #87929e; }

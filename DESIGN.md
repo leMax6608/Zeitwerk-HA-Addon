@@ -23,3 +23,5 @@ python zeitwerk/app/server.py
 Öffne `http://127.0.0.1:18109/`. Der getrennte Datenordner schützt bestehende Zeitdaten. Der Server lauscht auf allen Netzwerkinterfaces: nur in einem vertrauenswürdigen Netz testen und danach mit Strg+C beenden.
 
 Regressionstests: `python -m unittest discover -s tests -v`.
+
+Frontend-Berechnung der Wochenbalken: `node tests/test_week_progress.js`.

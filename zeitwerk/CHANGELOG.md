@@ -1,5 +1,11 @@
 # Änderungsverlauf
 
+## 5.0.1
+
+- Wochenbalken füllen sich bis zum Tagessoll blau und bei Überstunden erneut mit einer violetten Schicht von unten
+- Kleine Farblegende und genaue Arbeits-, Soll- und Überstundenzeiten als Tooltip und für Screenreader
+- Laufende Wochenbalken aktualisieren sich ohne Neuladen; an Tagen ohne Soll erscheint geleistete Arbeit vollständig als zusätzliche Zeit
+
 ## 5.0.0
 
 - Neue Oberfläche mit ruhigen Inhaltsflächen, schwebender mobiler Navigation, gleitender Tab-Markierung und eigenem Dunkelmodus

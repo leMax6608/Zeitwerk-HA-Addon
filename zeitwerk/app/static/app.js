@@ -285,6 +285,34 @@
     $("#pageTitle").textContent = freeToday ? "Heute frei" : xToday ? (name ? `Tagesziel geschafft, ${name}` : "Tagesziel geschafft") : finishedToday ? (name ? `Feierabend, ${name}` : "Feierabend") : name ? `${greeting}, ${name}` : "Dein Arbeitstag";
   }
 
+  function weekBarProgress(workedMinutes, targetMinutes) {
+    const worked = Math.max(0, Number(workedMinutes) || 0);
+    const target = Math.max(0, Number(targetMinutes) || 0);
+    const overtimeMinutes = Math.max(0, worked - target);
+    return {
+      goalPercent: target ? Math.min(100, worked / target * 100) : 0,
+      overtimePercent: target ? Math.min(100, overtimeMinutes / target * 100) : worked > 0 ? 100 : 0,
+      overtimeMinutes,
+    };
+  }
+
+  function weekBarDescription(name, minutes, target, overtime) {
+    return `${name}: ${formatDuration(minutes)} Std. · Soll ${formatDuration(target)} Std.${overtime > 0 ? ` · ${formatDuration(overtime)} Std. Überstunden` : ""}`;
+  }
+
+  function updateLiveWeekBar(day, minutes) {
+    const bar = $(`#weekBars .day-bar[data-date='${day}']`);
+    if (!bar) return;
+    const target = Number(bar.dataset.target);
+    const progress = weekBarProgress(minutes, target);
+    bar.querySelector(".day-bar-fill").style.height = `${progress.goalPercent}%`;
+    bar.querySelector(".day-bar-overtime").style.height = `${progress.overtimePercent}%`;
+    bar.classList.toggle("has-overtime", progress.overtimeMinutes > 0);
+    const description = weekBarDescription(bar.dataset.day, minutes, target, progress.overtimeMinutes);
+    bar.title = description;
+    bar.setAttribute("aria-label", description);
+  }
+
   function renderDashboard() {
     renderTimer();
     renderVacationCountdown();
@@ -316,11 +344,12 @@
     const names = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
     $("#weekBars").innerHTML = names.map((name, index) => {
       const day = new Date(monday); day.setDate(day.getDate() + index);
-      const minutes = minutesOn(day);
+      const minutes = state.active?.work_date === isoDate(day) ? liveTimerValues().netSeconds / 60 : minutesOn(day);
       const dayTarget = targetPerDay(day);
-      if (!dayTarget && !minutes) return "";
-      const height = Math.min(100, Math.round(minutes / Math.max(1, dayTarget) * 100));
-      return `<div class="day-bar ${isoDate(day) === state.selectedDay ? "today" : ""}" title="${name}: ${formatDuration(minutes)} Stunden"><div class="day-bar-track"><div class="day-bar-fill" style="height:${height}%"></div></div><span>${name}</span></div>`;
+      if (!dayTarget && !minutes && state.active?.work_date !== isoDate(day)) return "";
+      const progress = weekBarProgress(minutes, dayTarget);
+      const description = weekBarDescription(name, minutes, dayTarget, progress.overtimeMinutes);
+      return `<div class="day-bar ${isoDate(day) === state.selectedDay ? "today" : ""} ${progress.overtimeMinutes > 0 ? "has-overtime" : ""}" data-date="${isoDate(day)}" data-day="${name}" data-target="${dayTarget}" role="img" aria-label="${description}" title="${description}"><div class="day-bar-track" aria-hidden="true"><div class="day-bar-fill" style="height:${progress.goalPercent}%"></div><div class="day-bar-overtime" style="height:${progress.overtimePercent}%"></div></div><span aria-hidden="true">${name}</span></div>`;
     }).join("");
 
     const todays = entriesOn(selectedDay);
@@ -476,6 +505,7 @@
     $$("#timerTypePicker button").forEach(button => button.classList.toggle("active", button.dataset.type === active.type));
     const tick = () => {
       const values = liveTimerValues();
+      updateLiveWeekBar(active.work_date, values.netSeconds / 60);
       const remainingSeconds = Math.max(0, plannedTarget(active.work_date) * 60 - values.netSeconds);
       $("#workTimerValue").textContent = formatClock(values.netSeconds);
       $("#breakTimerValue").textContent = formatClock(values.breakSeconds);

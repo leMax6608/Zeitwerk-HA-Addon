@@ -1,5 +1,5 @@
 name: "Zeitwerk – Arbeitszeit"
-version: "5.0.0"
+version: "5.0.1"
 slug: "zeitwerk"
 description: "Private Arbeitszeiterfassung mit Pausenpruefung, Zeitkonto, Urlaub und Jahresauswertung"
 arch:

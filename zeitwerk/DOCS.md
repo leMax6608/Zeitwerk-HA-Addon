@@ -24,6 +24,8 @@ Das Zahnrad auf **Heute** öffnet einen optionalen Überstundenplan für diesen 
 
 Die Zeitkonto-Anzeige öffnet eine Übersicht mit angerechneter Zeit, Soll bis heute und Übertrag. Dieser Stand bleibt aktuell, auch wenn der Kalender ein anderes Jahr zeigt. Einträge vor deinem eingestellten Berechnungsbeginn sind weiterhin sichtbar, werden aber nicht ins Zeitkonto gerechnet.
 
+Die Balken beim **Wochenstand** füllen sich bis zum jeweiligen Tagessoll blau. Zusätzliche Zeit füllt denselben Balken ein zweites Mal von unten violett: zwei Überstunden bei acht Stunden Soll entsprechen beispielsweise einem Viertel des Balkens. Ohne Tagessoll ist geleistete Arbeit vollständig violett. Die genaue Dauer bleibt im Tagesprotokoll sichtbar, auch wenn die zweite Füllung bereits voll ist.
+
 ### Tageskürzel
 
 | Kürzel | Bedeutung |
