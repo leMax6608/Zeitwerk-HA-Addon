@@ -1,7 +1,7 @@
 "use strict";
 
-const CACHE_NAME = "zeitwerk-shell-apple-experiment-6";
-const SHELL_FILES = ["./", "styles.css?v=apple-experiment-4", "ios-next.css?v=apple-experiment-6", "app.js?v=apple-experiment-6", "app-icon.svg", "favicon.svg?v=4.4.0", "icon-180.png?v=4.4.0", "icon-192.png", "icon-512.png", "manifest.webmanifest?v=4.4.0"];
+const CACHE_NAME = "zeitwerk-shell-v5.0.0";
+const SHELL_FILES = ["./", "styles.css?v=5.0.0", "interface.css?v=5.0.0", "app.js?v=5.0.0", "app-icon.svg", "favicon.svg?v=5.0.0", "icon-180.png?v=5.0.0", "icon-192.png", "icon-512.png", "manifest.webmanifest?v=5.0.0"];
 
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(SHELL_FILES)).then(() => self.skipWaiting()));
@@ -14,7 +14,7 @@ self.addEventListener("activate", event => {
 self.addEventListener("fetch", event => {
   const request = event.request;
   const url = new URL(request.url);
-  const isDataRequest = /\/api\/(?:state|timer|entries|settings|import|export\.csv|backup\.json)(?:\/|$)/.test(url.pathname);
+  const isDataRequest = /\/api(?:\/|$)/.test(url.pathname);
   if (request.method !== "GET" || url.origin !== self.location.origin || isDataRequest) return;
   event.respondWith(fetch(request).then(response => {
     if (response.ok) caches.open(CACHE_NAME).then(cache => cache.put(request, response.clone()));

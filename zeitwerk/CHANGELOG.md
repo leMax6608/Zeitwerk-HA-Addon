@@ -1,5 +1,17 @@
 # Änderungsverlauf
 
+## 5.0.0
+
+- Neue Oberfläche mit ruhigen Inhaltsflächen, schwebender mobiler Navigation, gleitender Tab-Markierung und eigenem Dunkelmodus
+- Einstellungen speichern automatisch; Eingaben bleiben während des Speicherns erhalten, Fehler werden angezeigt und automatisch erneut versucht
+- Zeitkonto öffnet eine eigene Übersicht und zeigt auch beim Blättern im Kalender immer den aktuellen Stand
+- Neue Feierabendansicht mit Arbeitszeit, Tagessaldo, Zeiten, Pausen und Bruttoverdienst
+- Freiwillige Tagesnotizen mit Stichpunkten; ein individueller Überstundenplan passt Countdown und voraussichtliche Endzeit an, ohne das vertragliche Soll zu verändern
+- Erweiterte, einzeln wählbare Mitteilungen für Arbeitsbeginn, Pausen, nahenden Feierabend und erfüllte Überstundenpläne sowie 36 Motivationssprüche
+- Eigener Urlaubsbereich mit Jahresauswahl, Resturlaub und verwaltbaren Zeiträumen
+- Automatische Feiertage nach Bundesland über OpenHolidays, lokale Zwischenspeicherung und manuelle Ausnahmen; vorhandene Einträge bleiben erhalten
+- Sicherungen enthalten auch Tagespläne, Feiertagsausnahmen und geladene Feiertage; Zeitkonto-Berechnung berücksichtigt erst Einträge ab dem eingestellten Startdatum
+
 ## 4.4.0
 
 - Live Activity wird beim Arbeitsende vor der separaten Abschlussmeldung geschlossen; verzögerte Löschversuche fangen verspätete iPhone-Pushes ab

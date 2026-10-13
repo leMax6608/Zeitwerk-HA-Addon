@@ -4,6 +4,8 @@
 
 ## Einrichtung
 
+Einstellungen werden **automatisch gespeichert**. Schalter und Auswahlen sofort, Text- und Zahlenfelder nach einer kurzen Tipp-Pause. Der Status oben zeigt, ob alles gespeichert ist. Ungültige oder unvollständige Werte bleiben zur Korrektur stehen. Bei einem Verbindungsfehler bleiben Änderungen im geöffneten Browser erhalten und Zeitwerk versucht das Speichern erneut. Schließe die Seite erst, wenn „Automatisch gespeichert“ angezeigt wird.
+
 Unter **Einstellungen → Arbeitsmodell** legst du für jeden Wochentag ein eigenes Tagesziel fest. `00:00` kennzeichnet einen regelmäßig freien Tag. Neue Installationen starten mit einem neutralen Beispielmodell von fünf Tagen à acht Stunden und ohne vorgegebenen Urlaubsanspruch. Prüfe außerdem die Pausenregel, den Beginn der Zeitkonto-Berechnung sowie den Urlaubsanspruch für das jeweilige Kalenderjahr. Zeitguthaben oder Zeitschulden aus dem Vorjahr lassen sich in Minuten übernehmen.
 
 Ein optionales **Monatsbrutto** ermöglicht eine Schätzung des heutigen Verdiensts. Es wird durch die laut Arbeitsmodell geplanten Arbeitstage des jeweiligen Monats geteilt. Während der Arbeit wächst die Anzeige anteilig zum Tagesziel und höchstens bis zum Tagesanteil. Zusätzliche Stunden erhöhen ein festes Monatsgehalt nicht automatisch. Diese Anzeige ist keine Lohnabrechnung und berücksichtigt keine individuellen Zuschläge.
@@ -15,6 +17,12 @@ Auf **Heute** startest du die Arbeit und bei Bedarf eine Pause. Nach einer Pause
 **Arbeit beenden** erfordert eine Bestätigung. Danach ersetzt eine Tagesbilanz die Timer-Steuerung; ein weiterer normaler Start am selben Tag ist gesperrt. Bei einem versehentlichen Abschluss findest du **Einstellungen → Daten & Sicherung → Erweiterte Korrekturen → Abgeschlossenen Arbeitstag wieder öffnen**. Die Zeit seit dem Abschluss wird dabei als Pause erfasst. Falsche Uhrzeiten oder Pausen korrigierst du besser über **Manuell bearbeiten** in der Tagesansicht. Pausen werden dort als `HH:MM` eingetragen, beispielsweise `00:30`.
 
 Ein **X** bedeutet, dass das Tagesziel vollständig erfüllt ist, ohne einen laufenden Timer oder konkrete Uhrzeiten zu erfassen. Es ist **nicht** das Zeichen für einen normal getrackten Arbeitstag. Zusätzliche Stunden für einen X-Tag lassen sich in **Erweiterte Korrekturen** speichern; der Wert beschreibt die gesamte Zusatzzeit des Tages und wird nicht bei jedem Speichern erneut addiert.
+
+Das Zahnrad auf **Heute** öffnet einen optionalen Überstundenplan für diesen Tag. Er verlängert die angezeigte verbleibende Zeit und die erwartete Endzeit, verändert aber nicht dein vertragliches Tagessoll. Nach Feierabend kannst du freiwillig notieren, was du gemacht hast. Beginne eine Zeile mit `- `, um Stichpunkte zu schreiben; Enter führt die Liste fort. Notizen werden separat gespeichert und verändern keine Zeiten.
+
+**Fahrt zur Arbeit** markiert einen Tag mit Arbeitsweg für deine Jahresübersicht. Sie zählt weder Fahrtdauer noch zusätzliche Arbeitszeit.
+
+Die Zeitkonto-Anzeige öffnet eine Übersicht mit angerechneter Zeit, Soll bis heute und Übertrag. Dieser Stand bleibt aktuell, auch wenn der Kalender ein anderes Jahr zeigt. Einträge vor deinem eingestellten Berechnungsbeginn sind weiterhin sichtbar, werden aber nicht ins Zeitkonto gerechnet.
 
 ### Tageskürzel
 
@@ -36,7 +44,11 @@ Getrackte B- und H-Zeiten sowie X-Tage gehen in die Arbeitszeitsumme ein. Urlaub
 
 Tippe im Kalender auf einen Tag, um seine eigene Detailansicht zu öffnen. Für Urlaub über mehrere Tage wähle **Urlaub eintragen** und gib Beginn und Ende an. Zeitwerk überspringt regelmäßig freie Wochentage sowie bereits als **FT** eingetragene Tage – auch dann, wenn der Urlaub an einem solchen Tag beginnt. Diese Tage verbrauchen keinen Urlaub. Andere vorhandene Einträge werden nicht überschrieben.
 
-Für einen Feiertag oder anderen arbeitsfreien Tag nutze **Kalender → Freier Tag**; eine optionale Notiz ist möglich. Das geht auch im Voraus. FT zählt nicht als geleistete Arbeit, erzeugt für das Tagesziel keine Minusstunden und verbraucht keinen Urlaub. Feiertage werden nicht automatisch erkannt; trage die für dich relevanten Tage selbst ein. Pro Datum ist nur ein Tageseintrag möglich.
+Für einen Feiertag oder anderen arbeitsfreien Tag nutze **Kalender → Freier Tag**; eine optionale Notiz ist möglich. Das geht auch im Voraus. FT zählt nicht als geleistete Arbeit, erzeugt für das Tagesziel keine Minusstunden und verbraucht keinen Urlaub. Pro Datum ist nur ein gespeicherter Tageseintrag möglich.
+
+Unter **Einstellungen → Feiertage** kannst du optional dein Bundesland wählen und automatische Feiertage einschalten. Die Daten werden von OpenHolidays geladen und lokal zwischengespeichert. Du kannst einzelne automatische Tage ausschließen und wieder aktivieren. Manuelle Arbeitszeiten bleiben erhalten und haben Vorrang. Gemeindeabhängige Sonderfeiertage solltest du selbst eintragen; Mariä Himmelfahrt wird in Bayern beispielsweise nicht pauschal ergänzt.
+
+Unter **Einstellungen → Urlaub** findest du Anspruch und Resttage für das ausgewählte Jahr sowie deine Urlaubszeiträume. Du kannst Zeiträume direkt hinzufügen oder entfernen. Ein regulärer Anspruch dient als Standard für Jahre ohne eigene Festlegung. Beim Eintragen werden auch aktivierte automatische Feiertage übersprungen.
 
 Geplanter Urlaub reduziert den angezeigten Resturlaub sofort. Im Zeitkonto wird der Urlaubstag erst an seinem jeweiligen Datum berücksichtigt.
 
@@ -65,7 +77,9 @@ Optional zeigt Zeitwerk die laufende Arbeit über die **Home-Assistant-Companion
 
 Während der Arbeit läuft die geleistete Nettoarbeitszeit als Timer. In einer Pause zeigt der Timer die **gesamte** heute erfasste Pausenzeit an, nicht nur die aktuelle Pause. Die normale iPhone-Ansicht nennt die voraussichtliche frühestmögliche Endzeit anhand offener Nettoarbeitszeit und noch benötigter Mindestpause. Bei Zustandswechseln wird sie neu berechnet; zusätzliche Pausen verschieben sie. Die Apple-Watch-Ansicht erhält ebenfalls einen laufenden Chronometer.
 
-Unter **Einstellungen → Mitteilungen** kannst du unabhängig von der Live Activity drei Arten von Push-Nachrichten einstellen: Motivation bei 25, 50 und 75 Prozent des Tagesziels (Spruch mit Verdienst, nur Spruch oder nur Prozent), einmalig beim erreichten Tagesziel und eine kurze Feierabend-Zusammenfassung. Letztere zeigt den Abstand zum Tagessoll und den Saldo des Zeitkontos; mit eingetragenem Monatsbrutto auch den geschätzten Tagesverdienst. Eine Vorschau steht direkt im Menü. Beim Arbeitsende sendet Zeitwerk zuerst den Befehl zum Schließen der Live Activity und danach gegebenenfalls die separate Zusammenfassung. Wegen der iPhone-Push-Zustellung wird das Schließen verzögert wiederholt, solange kein neuer Timer läuft.
+Unter **Einstellungen → Mitteilungen** kannst du unabhängig von der Live Activity Nachrichten einzeln einschalten: Arbeitsbeginn, Motivation bei 25/50/75 Prozent, erfülltes Tagesziel, erfülltes Pausenminimum, fehlende Mindestpause, die letzten 15 Minuten, erreichter Überstundenplan und Feierabend. Motivation bietet 36 wechselnde Sprüche; wähle Spruch mit Verdienst, nur Spruch oder nur Prozent. Die kurze Feierabend-Zusammenfassung zeigt den Abstand zum Tagessoll und den Saldo des Zeitkontos; mit eingetragenem Monatsbrutto auch den geschätzten Tagesverdienst. Eine Vorschau steht direkt im Menü. Bereits erfolgreich versendete Tagesereignisse werden dauerhaft vermerkt, damit sie nach einem Neustart nicht erneut ausgelöst werden.
+
+Beim Arbeitsende sendet Zeitwerk zuerst den Befehl zum Schließen der Live Activity und danach gegebenenfalls die separate Zusammenfassung. Wegen der iPhone-Push-Zustellung wird das Schließen verzögert wiederholt, solange kein neuer Timer läuft.
 
 Ein Tipp auf die Live Activity öffnet Zeitwerk im Home-Assistant-Ingress. Die von Home Assistant bereitgestellte Vorlage erlaubt keine eigenen Pause- oder Stopp-Tasten und nur einen live laufenden Chronometer. Für frei gestaltete interaktive Ansichten wäre eine eigene native iOS-App nötig. Die Zeiterfassung selbst funktioniert auch ohne zugestellte Benachrichtigungen.
 

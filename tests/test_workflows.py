@@ -79,6 +79,27 @@ class ZeitwerkWorkflowTests(unittest.TestCase):
             with self.module.DB_LOCK, self.module.db() as con:
                 con.execute("DELETE FROM entries WHERE id=?", (entry["id"],))
 
+    def test_current_account_does_not_follow_calendar_year(self):
+        today = date.today()
+        with self.settings_override(tracking_start_date=today.isoformat(), previous_balance_minutes=90, holidays_enabled=False):
+            current = self.request("api/state")["current_account"]
+            future = self.request("api/state?from=2048-01-01&to=2048-12-31")["current_account"]
+            past = self.request("api/state?from=2020-01-01&to=2020-12-31")["current_account"]
+            self.assertEqual(current, future)
+            self.assertEqual(current, past)
+            self.assertEqual(current["previous_balance_minutes"], 90)
+            self.assertEqual(current["balance_minutes"], current["account_minutes"] - current["target_minutes"] + 90)
+
+    def test_partial_settings_save_preserves_other_values_and_survives_restart(self):
+        with self.settings_override(display_name="", monthly_gross_eur=0, start_notification_enabled=False):
+            self.request("api/settings", {"monthly_gross_eur": 3000})
+            self.request("api/settings", {"start_notification_enabled": True})
+            self.module.init_db()
+            saved = self.module.get_settings()
+            self.assertEqual(saved["monthly_gross_eur"], 3000)
+            self.assertTrue(saved["start_notification_enabled"])
+            self.assertEqual(saved["display_name"], "")
+
     def test_overtime_plan_is_durable_and_does_not_change_contractual_target(self):
         day = "2041-03-04"
         with self.settings_override(overtime_plan_by_date={}, daily_work_minutes=[480] * 7):

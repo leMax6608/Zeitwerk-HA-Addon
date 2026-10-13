@@ -9,9 +9,9 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Zeitwerk">
   <title>Zeitwerk · Arbeitszeit</title>
-  <link rel="icon" type="image/svg+xml" href="favicon.svg?v=4.4.0">
-  <link rel="apple-touch-icon" href="icon-180.png?v=4.4.0">
-  <link rel="manifest" href="manifest.webmanifest?v=4.4.0">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg?v=5.0.0">
+  <link rel="apple-touch-icon" href="icon-180.png?v=5.0.0">
+  <link rel="manifest" href="manifest.webmanifest?v=5.0.0">
   <script>
     (() => {
       const saved = localStorage.getItem("zeitwerk-theme") || "system";
@@ -20,8 +20,8 @@
       document.documentElement.dataset.themePreference = saved;
     })();
   </script>
-  <link rel="stylesheet" href="styles.css?v=apple-experiment-4">
-  <link rel="stylesheet" href="ios-next.css?v=apple-experiment-6">
+  <link rel="stylesheet" href="styles.css?v=5.0.0">
+  <link rel="stylesheet" href="interface.css?v=5.0.0">
 </head>
 <body>
   <div class="app-shell">
@@ -33,7 +33,7 @@
         <button class="nav-item" data-view="reports" type="button"><svg><use href="#i-chart"></use></svg><span>Auswertung</span></button>
         <button class="nav-item" data-view="settings" type="button"><svg><use href="#i-sliders"></use></svg><span>Einstellungen</span></button>
       </nav>
-      <div class="header-actions"><div class="balance-chip" id="balanceChip"><span class="balance-icon"><svg><use href="#i-trend"></use></svg></span><span><small>Zeitkonto</small><b id="sidebarBalance">± 0:00</b></span></div><button class="icon-button" id="openEntry" type="button" aria-label="Zeit manuell eintragen"><svg><use href="#i-plus"></use></svg></button></div>
+      <div class="header-actions"><button class="balance-chip" id="balanceChip" type="button" aria-label="Zeitkonto ansehen" aria-haspopup="dialog"><span class="balance-icon"><svg><use href="#i-clock"></use></svg></span><span class="balance-copy"><small>Zeitkonto</small><b id="sidebarBalance">± 0:00</b></span><svg class="balance-chevron"><use href="#i-right"></use></svg></button><button class="icon-button" id="openEntry" type="button" aria-label="Zeit manuell eintragen"><svg><use href="#i-plus"></use></svg></button></div>
     </header>
 
     <main class="main-content">
@@ -59,9 +59,10 @@
 
           <section class="finished-card hidden" id="finishedCard" aria-label="Abgeschlossener Arbeitstag">
             <div class="finished-eyebrow"><span class="finished-check"><svg><use href="#i-shield"></use></svg></span><span>Arbeitstag abgeschlossen</span></div>
-            <div class="finished-main"><div><p id="finishedLead">Netto-Arbeitszeit</p><h2><span id="finishedHeadline" class="visually-hidden">Heute hast du</span><span id="finishedDuration">0:00</span><span id="finishedUnit">Stunden gearbeitet</span></h2><span class="finished-message" id="finishedMessage">Deine Zeit ist sicher gespeichert.</span></div></div>
+            <div class="finished-main"><div><p id="finishedLead">Deine Arbeitszeit heute</p><h2><span id="finishedHeadline" class="visually-hidden">Heute hast du</span><span id="finishedDuration">0:00</span><span id="finishedUnit">Stunden gearbeitet</span></h2><span class="finished-message" id="finishedMessage">Deine Zeit ist sicher gespeichert.</span></div><span class="finished-day-icon" aria-hidden="true"><svg><use href="#i-sun"></use></svg></span></div>
+            <div class="finished-delta" id="finishedDelta"><div><strong id="finishedBalance">± 0:00</strong><span id="finishedDeltaLabel">genau im Tagessoll</span></div><small id="finishedTarget">8:00 Std. Soll</small></div>
             <div class="finished-goal"><div class="finished-goal-track" id="finishedProgress" role="progressbar" aria-label="Fortschritt zum Tagesziel" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><span id="finishedGoalLabel">0 % vom Tagesziel</span></div>
-            <div class="finished-facts"><div><span id="finishedSpanLabel">Beginn – Ende</span><b id="finishedSpan">–</b></div><div><span>Pause</span><b id="finishedBreak">–</b></div><div><span>Heute verdient</span><b id="finishedEarned">–</b></div><div><span>Zum Tagesziel</span><b id="finishedBalance">–</b></div></div>
+            <div class="finished-facts"><div class="finished-span-row"><span id="finishedSpanLabel">Beginn – Ende</span><b id="finishedSpan">–</b></div><div><span>Pause insgesamt</span><b id="finishedBreak">–</b></div><div><span>Heute verdient · Brutto</span><b id="finishedEarned">–</b></div></div>
             <details class="finished-note" id="finishedNote"><summary><svg><use href="#i-edit"></use></svg><span id="dayNoteSummary">Tagesnotiz hinzufügen</span><span class="optional-label">Optional</span></summary><form id="dayNoteForm"><input id="dayNoteEntryId" type="hidden"><label class="field"><span>Was hast du heute gemacht?</span><textarea id="dayNoteText" rows="4" maxlength="2000" placeholder="- Projekt weiterentwickelt&#10;- Besprechung vorbereitet"></textarea><small>Freier Text oder Stichpunkte. Mit „- “ und Enter führst du eine Liste weiter.</small></label><button class="button quiet-button" type="submit">Notiz speichern</button><span id="dayNoteStatus" role="status"></span></form></details>
           </section>
 
@@ -100,7 +101,7 @@
       </section>
 
       <section class="view" id="view-settings">
-        <div class="section-toolbar"><div><p class="eyebrow">Dein Zeitwerk</p><h2>Einstellungen</h2><p class="settings-intro">Passe Arbeitszeiten, Mitteilungen und Darstellung an. Änderungen werden erst mit „Einstellungen speichern“ übernommen.</p></div></div>
+        <div class="section-toolbar"><div><p class="eyebrow">Dein Zeitwerk</p><h2>Einstellungen</h2><p class="settings-intro">Passe Arbeitszeiten, Mitteilungen und Darstellung an. Deine Änderungen werden automatisch gespeichert.</p><div class="settings-status" id="settingsStatus" data-state="saved" role="status" aria-live="polite"><span class="settings-status-dot" aria-hidden="true"></span><span id="settingsHint">Automatisch gespeichert</span></div></div></div>
         <form id="settingsForm" class="settings-layout">
           <section class="card settings-card">
             <button class="settings-heading" type="button" aria-expanded="false"><span class="settings-icon model"><svg><use href="#i-user"></use></svg></span><span class="settings-heading-copy"><strong>Arbeitsmodell</strong><small>Arbeitswoche, Tagesziele &amp; Pausen</small></span></button>
@@ -164,7 +165,7 @@
             <button class="settings-heading" type="button" aria-expanded="false"><span class="settings-icon holidays"><svg><use href="#i-calendar"></use></svg></span><span class="settings-heading-copy"><strong>Feiertage</strong><small>Automatisch nach Bundesland &amp; eigene Ausnahmen</small></span></button>
             <div class="settings-panel" aria-hidden="true"><div class="settings-panel-inner">
               <label class="switch-row"><span><b>Feiertage automatisch berücksichtigen</b><small>Arbeitsfreie Feiertage werden ohne Urlaubstag und ohne Minusstunden berücksichtigt.</small></span><span class="switch-control"><span class="switch-state" aria-hidden="true">Aus</span><input id="settingHolidays" type="checkbox" role="switch"></span></label>
-              <label class="field"><span>Bundesland deines Arbeitsorts</span><select id="settingHolidayState"></select><small>Die Auswahl gilt nach dem Speichern. Lokale Sonderfeiertage, z. B. Mariä Himmelfahrt in Bayern, bitte manuell eintragen.</small></label>
+              <label class="field"><span>Bundesland deines Arbeitsorts</span><select id="settingHolidayState"></select><small>Die Auswahl wird automatisch gespeichert. Lokale Sonderfeiertage, z. B. Mariä Himmelfahrt in Bayern, bitte manuell eintragen.</small></label>
               <div class="holiday-list-heading"><b>Feiertage <span id="holidayYearLabel"></span></b><button class="text-action" id="refreshHolidays" type="button">Aktualisieren</button></div>
               <p class="settings-section-copy" id="holidayLoadStatus"></p>
               <details class="holiday-list-details"><summary>Feiertage &amp; Ausnahmen ansehen</summary><div id="settingsHolidayList" class="holiday-list"></div></details>
@@ -188,7 +189,6 @@
             <details class="advanced-corrections"><summary>Erweiterte Korrekturen</summary><div><p>Nur falls du den heutigen Arbeitstag versehentlich abgeschlossen hast. Die Zeit zwischen Abschluss und Wiederaufnahme zählt als Pause.</p><button class="button quiet-button" id="reopenTimer" type="button" disabled>Abgeschlossenen Arbeitstag wieder öffnen</button><small id="reopenHint">Heute liegt kein abgeschlossener Arbeitstag vor.</small></div><div class="advanced-x-extra"><b>Zusätzliche Stunden für X-Tag</b><p>Nur für einen bereits als X eingetragenen Tag. Der Wert ist die gesamte zusätzliche Zeit über dem Tagesziel und kann erneut korrigiert werden.</p><div class="field-row"><label class="field"><span>Datum</span><input id="xExtraDate" type="date"></label><label class="field"><span>Zusätzlich (HH:MM)</span><input id="xExtraDuration" type="time" min="00:00" max="12:00" step="60" value="00:00"></label></div><button class="button quiet-button" id="saveXExtra" type="button">Zusatzzeit speichern</button></div></details>
             </div></div>
           </section>
-          <div class="settings-save"><span id="settingsHint"></span><button class="button primary-action" type="submit">Einstellungen speichern</button></div>
         </form>
       </section>
     </main>
@@ -234,11 +234,12 @@
   </dialog>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <dialog id="balanceDialog" class="entry-dialog balance-dialog" aria-labelledby="accountTitle"><div class="account-sheet"><div class="dialog-head"><div><p class="eyebrow">Stand heute</p><h2 id="accountTitle">Dein Zeitkonto</h2></div><button class="dialog-close" id="closeAccount" type="button" aria-label="Schließen">×</button></div><div class="account-hero"><strong id="accountDialogBalance">± 0:00</strong><span id="accountDialogHint">Dein Zeitkonto ist ausgeglichen</span></div><div class="account-breakdown"><div><span>Angerechnete Zeit</span><b id="accountRecorded">0:00</b></div><div><span>Soll bis heute</span><b id="accountTarget">0:00</b></div><div><span>Übertrag</span><b id="accountCarry">± 0:00</b></div></div><p class="settings-section-copy" id="accountPeriod"></p><button class="button primary-action" id="accountReports" type="button">Auswertung öffnen</button></div></dialog>
   <dialog id="dayPlanDialog" class="entry-dialog" aria-labelledby="dayPlanTitle"><form id="dayPlanForm"><div class="dialog-head"><div><p class="eyebrow">Nur für heute</p><h2 id="dayPlanTitle">Dein Tagesplan</h2></div><button class="dialog-close" id="closeDayPlan" type="button" aria-label="Schließen">×</button></div><p class="dialog-intro">Wenn du heute länger arbeiten möchtest, kannst du die zusätzliche Zeit planen. Dein vertragliches Soll und das Zeitkonto bleiben davon unabhängig.</p><label class="field"><span>Zusätzliche Arbeitszeit <small>HH:MM</small></span><input id="dayPlanExtra" type="time" min="00:00" max="12:00" step="60" value="00:00"><small>00:00 entfernt den Überstundenplan.</small></label><div id="dayPlanPreview" class="day-plan-preview"></div><div class="dialog-actions"><button class="button quiet-button" id="cancelDayPlan" type="button">Abbrechen</button><button class="button primary-action" type="submit">Plan speichern</button></div></form></dialog>
   <svg class="svg-sprite" aria-hidden="true">
     <symbol id="i-gear" viewBox="0 0 24 24"><path d="m9.5 3-.6 2.2-2 1.2-2.2-.6-2.5 4.4L3.8 12l-.6 2.2 2.5 4.4 2.2-.6 2 1.2.6 2.2h5l.6-2.2 2-1.2 2.2.6 2.5-4.4L20.2 12l.6-2.2-2.5-4.4-2.2.6-2-1.2L13.5 3h-4Z"/><circle cx="12" cy="12" r="3"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol><symbol id="i-play" viewBox="0 0 24 24"><path d="m9 6 9 6-9 6V6Z"/></symbol><symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 6v12M16 6v12"/></symbol><symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1"/></symbol><symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4Z"/><path d="m13.5 6.5 4 4"/></symbol><symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol><symbol id="i-timer" viewBox="0 0 24 24"><path d="M9 2h6M12 5v3"/><circle cx="12" cy="14" r="7"/><path d="M12 14l3-2"/></symbol><symbol id="i-calendar" viewBox="0 0 24 24"><path d="M7 3v3M17 3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v14H4V6a1 1 0 0 1 1-1Z"/></symbol><symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V10m6 10V4m6 16v-7m4 7H2"/></symbol><symbol id="i-trend" viewBox="0 0 24 24"><path d="m4 15 5-5 4 4 7-8M16 6h4v4"/></symbol><symbol id="i-wallet" viewBox="0 0 24 24"><path d="M4 6h14a2 2 0 0 1 2 2v10H4V6Z"/><path d="M4 6V4h12v2M15 12h5"/></symbol><symbol id="i-home" viewBox="0 0 24 24"><path d="m3 11 9-8 9 8v10h-6v-7H9v7H3V11Z"/></symbol><symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 18h3a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h7"/></symbol><symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol><symbol id="i-flame" viewBox="0 0 24 24"><path d="M12 22c4 0 7-3 7-7 0-3-1.5-6-5-10 0 3-2 5-4 6 0-2-1-4-2-5-2 3-3 6-3 9 0 4 3 7 7 7Z"/></symbol><symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></symbol><symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.6 2.7 8 7 10 4.3-2 7-5.4 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-5"/></symbol><symbol id="i-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol><symbol id="i-right" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol><symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 20h16"/></symbol><symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4m-5 5 5-5 5 5M4 20h16"/></symbol><symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c.7-4 3.3-6 8-6s7.3 2 8 6"/></symbol><symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 15.2A8.5 8.5 0 0 1 8.8 4 8.5 8.5 0 1 0 20 15.2Z"/></symbol><symbol id="i-phone" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M10 5h4M11 19h2"/></symbol><symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7"/></symbol><symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol><symbol id="i-island" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="7"/><path d="M9 12h6"/></symbol><symbol id="i-send" viewBox="0 0 24 24"><path d="m3 11 18-8-8 18-2-8-8-2Z"/><path d="m11 13 4-4"/></symbol><symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></symbol><symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 20h20L12 3Z"/><path d="M12 9v4M12 17h.01"/></symbol>
   </svg>
-  <script src="app.js?v=apple-experiment-6"></script>
+  <script src="app.js?v=5.0.0"></script>
 </body>
 </html>

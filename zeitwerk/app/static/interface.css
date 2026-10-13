@@ -1,4 +1,4 @@
-/* Zeitwerk design experiment — a quiet content layer, with glass reserved for navigation. */
+/* Zeitwerk interface — quiet content surfaces, with glass reserved for navigation. */
 :root {
   --bg: #f5f5f7;
   --surface: #fff;
@@ -660,3 +660,72 @@ dialog[open] { animation: zeitwerk-dialog-enter .28s cubic-bezier(.2, .75, .2, 1
   .app-header, .mobile-nav, .settings-save { background: var(--surface) !important; }
   [data-theme="dark"] .settings-panel input:not([type="checkbox"]):not([type="radio"]), [data-theme="dark"] .settings-panel select { border-color: var(--line); }
 }
+
+/* Account capsule and a calm end-of-day summary. */
+.balance-chip { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 76px; padding: 13px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface-2); color: var(--ink); text-align: left; cursor: pointer; box-shadow: inset 0 1px 0 var(--glass-edge); transition: border-color .25s ease, background-color .25s ease; }
+.balance-chip .balance-copy { display: grid; gap: 3px; min-width: 0; }
+.balance-chip small { color: var(--muted); font-size: .7rem; font-weight: 550; }
+.balance-chip b { color: var(--ink); font-size: 1.4rem; line-height: 1.05; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -.025em; white-space: nowrap; }
+.balance-icon, .balance-chip.negative .balance-icon { width: 34px; height: 34px; border-radius: 12px; background: var(--brand-soft); color: var(--brand-strong); }
+.balance-icon svg { width: 18px; height: 18px; }
+.balance-chevron { margin-left: auto; width: 13px; height: 13px; flex: 0 0 auto; color: var(--muted); }
+.balance-chip:hover { border-color: var(--brand-border); }
+.balance-dialog { width: min(440px, calc(100% - 24px)); }
+.account-sheet { display: grid; gap: 22px; padding: 26px; }
+.account-hero { display: grid; gap: 7px; padding: 14px 0; text-align: center; }
+.account-hero strong { font-size: clamp(3rem, 13vw, 4rem); font-weight: 590; line-height: 1; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.account-hero span { font-size: .85rem; color: var(--muted); }
+.account-breakdown { padding: 0 16px; border: 1px solid var(--line); border-radius: 17px; background: var(--surface-2); }
+.account-breakdown > div { display: flex; justify-content: space-between; align-items: center; gap: 15px; padding: 15px 0; font-size: .85rem; }
+.account-breakdown > div + div { border-top: 1px solid var(--line); }
+.account-breakdown span { color: var(--muted); }
+.account-breakdown b { font-variant-numeric: tabular-nums; font-weight: 650; }
+.account-sheet > p { margin: 0; text-align: center; }
+.settings-status { display: flex; align-items: center; gap: 7px; margin-top: 13px; min-height: 20px; font-size: .76rem; color: var(--muted); }
+.settings-status-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--brand); }
+.settings-status[data-state="saving"] .settings-status-dot { width: 12px; height: 12px; border: 2px solid var(--line); border-top-color: var(--brand); background: transparent; animation: spin .8s linear infinite; }
+.settings-status[data-state="error"], .settings-status[data-state="invalid"] { color: var(--danger); }
+.settings-status[data-state="error"] .settings-status-dot, .settings-status[data-state="invalid"] .settings-status-dot { background: var(--danger); }
+.finished-card { gap: 22px; padding: 28px; }
+.finished-main { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 20px; }
+.finished-main h2 { display: grid; gap: 7px; margin: 8px 0 12px; }
+.finished-main h2 #finishedDuration { font-size: clamp(3.9rem, 6vw, 5.5rem); font-weight: 570; letter-spacing: -.035em; }
+.finished-main h2 #finishedUnit { font-size: .83rem; }
+.finished-day-icon { display: grid; place-items: center; width: 68px; height: 68px; border: 1px solid var(--brand-border); border-radius: 24px; background: var(--brand-soft); color: var(--brand-strong); }
+.finished-day-icon svg { width: 32px; height: 32px; stroke-width: 1.35; }
+.finished-delta { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 18px; border: 1px solid var(--brand-border); border-radius: 17px; background: var(--brand-soft); }
+.finished-delta > div { display: grid; gap: 4px; }
+.finished-delta strong { color: var(--brand-strong); font-size: 1.7rem; line-height: 1.1; letter-spacing: -.025em; font-weight: 640; font-variant-numeric: tabular-nums; }
+.finished-delta span, .finished-delta small { color: var(--muted); font-size: .74rem; }
+.finished-delta small { text-align: right; }
+.finished-delta.is-negative { background: var(--surface-2); border-color: var(--line); }
+.finished-delta.is-negative strong { color: var(--danger); }
+.finished-goal { gap: 9px; margin: 0; }
+.finished-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 0; }
+.finished-facts > div, .finished-facts > div:nth-child(odd), .finished-facts > div:nth-child(even) { display: grid; gap: 5px; min-height: 68px; padding: 14px 16px; border: 0; border-radius: 14px; background: var(--surface-2); }
+.finished-facts > div.finished-span-row { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; }
+.finished-facts span { font-size: .71rem; }
+.finished-facts b { font-size: 1.08rem; font-weight: 630; font-variant-numeric: tabular-nums; }
+.finished-note { margin: 0; }
+.finished-card.day-off .finished-day-icon { display: none; }
+@media (max-width: 900px) {
+  .balance-chip { width: auto; min-height: 45px; gap: 8px; padding: 7px 9px; border-radius: 15px; background: var(--surface); }
+  .balance-chip small { font-size: .6rem; }
+  .balance-chip b { font-size: 1.13rem; }
+  .balance-chip .balance-copy { gap: 2px; }
+  .balance-icon, .balance-chip.negative .balance-icon { width: 29px; height: 29px; border-radius: 10px; }
+  .balance-icon svg { width: 16px; height: 16px; }
+  .balance-chevron { width: 11px; height: 11px; margin-left: 0; }
+}
+@media (max-width: 620px) {
+  .balance-dialog { width: 100%; }
+  .account-sheet { padding: 24px 20px calc(24px + env(safe-area-inset-bottom)); }
+  .finished-card { padding: 23px; gap: 19px; }
+  .finished-main { gap: 12px; }
+  .finished-main h2 #finishedDuration { font-size: clamp(3.4rem, 15vw, 4.5rem); }
+  .finished-day-icon { width: 48px; height: 48px; border-radius: 17px; }
+  .finished-day-icon svg { width: 26px; height: 26px; }
+  .finished-facts > div, .finished-facts > div:nth-child(odd), .finished-facts > div:nth-child(even) { padding: 13px; }
+  .finished-delta { padding: 15px; }
+}
+@media (max-width: 360px) { .balance-icon { display: none; } }

@@ -1089,6 +1089,7 @@ def summary_for(entries: list[dict], settings: dict, start_date: str, end_date: 
         "worked_minutes": worked,
         "target_minutes": target_minutes,
         "credited_minutes": account - worked,
+        "account_minutes": balance_account,
         "balance_minutes": balance_account - target_minutes,
         "vacation_days": vacation,
         "homeoffice_days": homeoffice,
@@ -1099,7 +1100,7 @@ def summary_for(entries: list[dict], settings: dict, start_date: str, end_date: 
 
 
 class Handler(SimpleHTTPRequestHandler):
-    server_version = "Zeitwerk/4.4.0"
+    server_version = "Zeitwerk/5.0.0"
     extensions_map = {
         **SimpleHTTPRequestHandler.extensions_map,
         ".webmanifest": "application/manifest+json",
@@ -1167,6 +1168,10 @@ class Handler(SimpleHTTPRequestHandler):
             for year in {int(start_date[:4]), int(end_date[:4]), today.year}:
                 refresh_holidays(settings, year)
             entries = list_entries(start_date, end_date, settings)
+            current_year_start = f"{today.year}-01-01"
+            current_account = summary_for(list_entries(current_year_start, today.isoformat(), settings), settings, current_year_start, today.isoformat())
+            current_account["previous_balance_minutes"] = int(settings.get("previous_balance_minutes", 0) or 0)
+            current_account["balance_minutes"] += current_account["previous_balance_minutes"]
             return self.json_response(
                 {
                     "settings": settings,
@@ -1177,6 +1182,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "holidays": holiday_status(settings, int(start_date[:4])),
                     "vacation_periods": vacation_periods(settings),
                     "summary": summary_for(entries, settings, start_date, end_date),
+                    "current_account": current_account,
                     "storage": {"durable": True, "safety_copy": SAFETY_PATH.exists()},
                     "live_activity": {
                         "api_available": bool(os.environ.get("SUPERVISOR_TOKEN")),

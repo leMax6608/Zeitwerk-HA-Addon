@@ -55,6 +55,7 @@
     todayEntries: [],
     active: null,
     summary: null,
+    currentAccount: null,
     liveActivity: null,
     nextVacation: null,
     holidays: null,
@@ -71,6 +72,11 @@
     vacationYear: new Date().getFullYear(),
     ticker: null,
     timerBusy: false,
+    pendingSettings: new Map(),
+    settingsRevision: 0,
+    settingsSaveTimer: null,
+    settingsSavePromise: null,
+    settingsRetryDelay: 2000,
   };
 
   async function api(path, options = {}) {
@@ -115,13 +121,14 @@
       state.todayEntries = data.today_entries || [];
       state.active = data.active;
       state.summary = data.summary;
+      state.currentAccount = data.current_account || null;
       state.liveActivity = data.live_activity || null;
       state.nextVacation = data.next_vacation || null;
       state.holidays = data.holidays || null;
       state.vacationPeriods = data.vacation_periods || [];
       state.loadedYear = year;
       $("#connectionBanner").classList.add("hidden");
-      renderAll(keepSettings);
+      renderAll(keepSettings || state.pendingSettings.size > 0 || Boolean(state.settingsSavePromise));
       document.body.classList.add("loaded");
     } catch (error) {
       document.body.classList.add("loaded");
@@ -358,13 +365,26 @@
     $("#commuteDays").textContent = yearEntries.filter(entry => entry.commute).length;
     $("#todayEarnings").textContent = formatMoney(state.todayEntries.reduce((sum, entry) => sum + Number(entry.estimated_gross_eur || 0), 0));
 
-    const yearStart = new Date(year, 0, 1);
-    const balanceEnd = selectedDay > today ? today : selectedDay;
-    const carry = year === today.getFullYear() ? Number(state.settings.previous_balance_minutes || 0) : 0;
-    const yearBalance = yearEntries.filter(entry => entry.work_date <= isoDate(balanceEnd) && countsForAccount(entry)).reduce((sum, entry) => sum + entry.account_minutes, 0) - targetBetween(yearStart, balanceEnd) + carry;
-    $("#sidebarBalance").textContent = formatSigned(yearBalance);
-    $("#balanceChip").classList.toggle("negative", yearBalance < 0);
-    $("#balanceChip").classList.toggle("positive", yearBalance > 0);
+    renderAccountSummary();
+  }
+
+  function renderAccountSummary() {
+    const account = state.currentAccount;
+    if (!account) return;
+    const balance = Number(account.balance_minutes || 0);
+    $("#sidebarBalance").textContent = formatSigned(balance);
+    $("#balanceChip").classList.toggle("negative", balance < 0);
+    $("#balanceChip").classList.toggle("positive", balance > 0);
+    $("#balanceChip").setAttribute("aria-label", `Zeitkonto ansehen: ${formatSigned(balance)} Stunden`);
+    $("#accountDialogBalance").textContent = formatSigned(balance);
+    $("#accountDialogBalance").classList.toggle("negative", balance < 0);
+    $("#accountDialogHint").textContent = balance > 0 ? "Plusstunden gesammelt" : balance < 0 ? "Aktuell unter dem Soll" : "Dein Zeitkonto ist ausgeglichen";
+    $("#accountRecorded").textContent = formatDuration(account.account_minutes);
+    $("#accountTarget").textContent = formatDuration(account.target_minutes);
+    $("#accountCarry").textContent = formatSigned(account.previous_balance_minutes);
+    const yearStart = `${new Date().getFullYear()}-01-01`;
+    const start = state.settings.tracking_start_date > yearStart ? state.settings.tracking_start_date : yearStart;
+    $("#accountPeriod").textContent = `Berechnet ab ${new Intl.DateTimeFormat("de-DE").format(parseISO(start))} · Stand heute`;
   }
 
   function liveTimerValues() {
@@ -479,6 +499,7 @@
     $("#finishedCard .finished-eyebrow > span:last-child").textContent = "Arbeitstag abgeschlossen";
     $("#finishedCard .finished-goal").classList.remove("hidden");
     $("#finishedCard .finished-facts").classList.remove("hidden");
+    $("#finishedDelta").classList.remove("hidden");
     $("#finishedNote").classList.remove("hidden");
     $("#dayNoteEntryId").value = entry.id;
     $("#dayNoteText").value = entry.note || "";
@@ -486,7 +507,7 @@
     const target = targetPerDay(entry.work_date);
     const delta = entry.worked_minutes - target;
     const isX = entry.type === "X";
-    $("#finishedLead").textContent = isX ? "Für heute verbucht" : "Netto-Arbeitszeit";
+    $("#finishedLead").textContent = isX ? "Für heute verbucht" : "Deine Arbeitszeit heute";
     $("#finishedHeadline").textContent = isX ? "Für heute sind" : "Heute hast du";
     $("#finishedUnit").textContent = isX ? "Stunden verbucht" : "Stunden gearbeitet";
     $("#finishedDuration").textContent = formatDuration(entry.worked_minutes);
@@ -500,11 +521,14 @@
     $("#finishedEarned").textContent = formatMoney(entry.estimated_gross_eur || 0);
     $("#finishedBalance").textContent = formatSigned(delta);
     $("#finishedBalance").classList.toggle("negative", delta < 0);
+    $("#finishedDelta").classList.toggle("is-negative", delta < 0);
+    $("#finishedDeltaLabel").textContent = delta > 0 ? "über deinem Tagessoll" : delta < 0 ? "unter deinem Tagessoll" : "genau im Tagessoll";
+    $("#finishedTarget").textContent = `${formatDuration(target)} Std. Soll`;
     $("#finishedMessage").textContent = isX
       ? "Dein Tagesziel ist vollständig erfüllt und gespeichert."
       : delta >= 0
-      ? `Tagesziel geschafft${delta > 0 ? ` · ${formatDuration(delta)} darüber` : ""}. Deine Zeit ist sicher gespeichert.`
-      : `${formatDuration(-delta)} bis zum Tagesziel. Deine Zeit ist sicher gespeichert.`;
+      ? "Gut geschafft. Deine Arbeitszeit ist gespeichert."
+      : "Dein Tag ist abgeschlossen und sicher gespeichert.";
   }
 
   function renderFreeDayCard(entry) {
@@ -516,6 +540,7 @@
     $("#finishedMessage").textContent = entry.type === "U" ? "Dein Urlaub ist eingetragen. Genieße die freie Zeit." : `${formatDuration(entry.credited_minutes || 0)} Std. berücksichtigt · kein Urlaubstag verbraucht.`;
     $("#finishedCard .finished-goal").classList.add("hidden");
     $("#finishedCard .finished-facts").classList.add("hidden");
+    $("#finishedDelta").classList.add("hidden");
     $("#finishedNote").classList.add("hidden");
   }
 
@@ -805,7 +830,7 @@
     if (!$("#xExtraDate").value) $("#xExtraDate").value = isoDate(new Date());
     const selectedX = state.entries.find(entry => entry.work_date === $("#xExtraDate").value && entry.type === "X");
     if (selectedX) $("#xExtraDuration").value = formatHoursMinutes(selectedX.extra_work_minutes || 0);
-    $("#settingsForm").classList.remove("is-dirty");
+    setSettingsStatus("saved", "Automatisch gespeichert");
   }
 
   function updateSettingsControls() {
@@ -846,7 +871,7 @@
   function renderHolidaySettings() {
     const info = state.holidays;
     $("#holidayYearLabel").textContent = info?.year || state.loadedYear;
-    $("#holidayLoadStatus").textContent = !state.settings.holidays_enabled ? "Wähle dein Bundesland, aktiviere den Schalter und speichere die Einstellungen." : info?.error || (info?.fetched_at ? `${info.state_name} · ${info.holidays.length} Feiertage gespeichert. Einzelne Ausnahmen werden sofort gespeichert.` : "Noch keine Feiertage geladen. Bitte aktualisieren.");
+    $("#holidayLoadStatus").textContent = !state.settings.holidays_enabled ? "Aktiviere den Schalter und wähle dein Bundesland. Die Auswahl wird automatisch gespeichert." : info?.error || (info?.fetched_at ? `${info.state_name} · ${info.holidays.length} Feiertage gespeichert. Einzelne Ausnahmen werden sofort gespeichert.` : "Noch keine Feiertage geladen. Bitte aktualisieren.");
     const excluded = new Set(state.settings.holiday_exclusions || []);
     $("#settingsHolidayList").innerHTML = (info?.holidays || []).map(item => `<div class="holiday-row ${excluded.has(item.date) ? "is-excluded" : ""}"><div><b>${escapeHTML(item.name)}</b><small>${new Intl.DateTimeFormat("de-DE", { weekday: "short", day: "2-digit", month: "2-digit" }).format(parseISO(item.date))}${excluded.has(item.date) ? " · ausgeschlossen" : ""}</small></div><button type="button" class="text-action" data-holiday-date="${item.date}" data-excluded="${excluded.has(item.date) ? "false" : "true"}">${excluded.has(item.date) ? "Wieder nutzen" : "Ausschließen"}</button></div>`).join("") || '<p class="settings-section-copy">Keine gespeicherten Feiertage.</p>';
     $$("[data-holiday-date]").forEach(button => button.addEventListener("click", () => saveHolidayException(button.dataset.holidayDate, button.dataset.excluded === "true")));
@@ -896,6 +921,7 @@
   }
 
   function setView(name, { scroll = true } = {}) {
+    if (document.body.dataset.view === "settings" && name !== "settings" && state.pendingSettings.size) void saveSettings();
     const desiredYear = name === "dashboard" ? parseISO(state.selectedDay).getFullYear() : name === "calendar" ? state.calendarDate.getFullYear() : state.loadedYear;
     if (desiredYear !== state.loadedYear) {
       loadYear(desiredYear, true).then(() => setView(name));
@@ -1098,11 +1124,9 @@
     } catch (error) { toast(error.message, true); }
   }
 
-  async function saveSettings(event) {
-    event.preventDefault();
+  function collectSettingsPayload() {
     const targets = Array.from({ length: 7 }, (_, index) => minutesFromTime($(`#settingDay${index}`).value));
     const workdays = targets.map((value, index) => value > 0 ? index : null).filter(value => value !== null);
-    if (!workdays.length) return toast("Bitte mindestens für einen Tag eine Arbeitszeit festlegen", true);
     const vacationYear = String(Number($("#settingVacationYear").value));
     const vacationValues = { ...state.vacationAllowancesDraft };
     if (state.vacationYearDirty) vacationValues[vacationYear] = Number($("#settingVacation").value);
@@ -1134,13 +1158,97 @@
       holidays_enabled: $("#settingHolidays").checked,
       holiday_state: $("#settingHolidayState").value,
     };
-    try {
-      await api("api/settings", { method: "POST", body: JSON.stringify(payload) });
-      $("#settingsHint").textContent = "Gespeichert";
-      setTimeout(() => { $("#settingsHint").textContent = ""; }, 2200);
-      toast("Einstellungen gespeichert");
-      await loadYear(state.loadedYear, true);
-    } catch (error) { toast(error.message, true); }
+    return payload;
+  }
+
+  const settingFieldKeys = {
+    settingName: ["display_name"], settingAge: ["age_group"], settingStartDate: ["tracking_start_date"],
+    settingVacation: ["vacation_allowance_by_year"], settingVacationDefault: ["vacation_allowance"],
+    settingCarry: ["vacation_carryover"], settingMonthlyGross: ["monthly_gross_eur"], settingBalance: ["previous_balance_minutes"],
+    settingAutoBreak: ["auto_break_deduction"], settingLiveActivity: ["live_activity_enabled"],
+    settingLiveService: ["live_activity_service"], settingMilestones: ["milestone_notifications_enabled"],
+    settingMilestoneStyle: ["milestone_notification_style"], settingGoalNotification: ["goal_notification_enabled"],
+    settingEndSummary: ["end_summary_enabled"], settingStartNotification: ["start_notification_enabled"],
+    settingPauseMinimum: ["pause_minimum_notification_enabled"], settingPauseReminder: ["pause_reminder_enabled"],
+    settingEndSoon: ["end_soon_notification_enabled"], settingOvertimeNotification: ["overtime_notification_enabled"],
+    settingHolidays: ["holidays_enabled", "holiday_state"], settingHolidayState: ["holidays_enabled", "holiday_state"],
+    ...Object.fromEntries(Array.from({ length: 7 }, (_, index) => [`settingDay${index}`, ["daily_work_minutes", "weekly_hours", "workdays"]])),
+  };
+
+  function setSettingsStatus(status, text) {
+    $("#settingsStatus").dataset.state = status;
+    $("#settingsHint").textContent = text;
+  }
+
+  function settingIsValid(key, payload) {
+    if (["holidays_enabled", "holiday_state"].includes(key) && payload.holidays_enabled && !payload.holiday_state) return false;
+    if (["daily_work_minutes", "weekly_hours", "workdays"].includes(key) && (!payload.workdays.length || payload.weekly_hours > 80)) return false;
+    if (key === "live_activity_service" && payload.live_activity_service && !/^mobile_app_[a-z0-9_]+$/.test(payload.live_activity_service.toLowerCase().replace(/^notify\./, ""))) return false;
+    const controls = Object.entries(settingFieldKeys).filter(([, keys]) => keys.includes(key)).map(([id]) => $(`#${id}`));
+    return controls.every(input => input.validity.valid && (!["number", "time", "date"].includes(input.type) || input.value !== ""));
+  }
+
+  function scheduleSettingsSave(event) {
+    const input = event.target;
+    const keys = input.name === "theme" ? ["theme"] : settingFieldKeys[input.id];
+    if (!keys) return;
+    const revision = ++state.settingsRevision;
+    keys.forEach(key => state.pendingSettings.set(key, revision));
+    const immediate = event.type === "change" && ["checkbox", "radio", "select-one", "date", "time"].includes(input.type);
+    clearTimeout(state.settingsSaveTimer);
+    state.settingsNextSaveAt = Date.now() + (immediate ? 0 : 650);
+    setSettingsStatus("pending", "Änderungen werden gespeichert …");
+    state.settingsSaveTimer = setTimeout(() => { void saveSettings(); }, immediate ? 0 : 650);
+  }
+
+  async function saveSettings(event) {
+    event?.preventDefault();
+    clearTimeout(state.settingsSaveTimer);
+    if (state.settingsSavePromise) return state.settingsSavePromise;
+    if (!state.pendingSettings.size) return true;
+    const fullPayload = collectSettingsPayload();
+    const captured = new Map([...state.pendingSettings].filter(([key]) => settingIsValid(key, fullPayload)));
+    if (!captured.size) {
+      const holidayChoiceMissing = fullPayload.holidays_enabled && !fullPayload.holiday_state;
+      setSettingsStatus("invalid", holidayChoiceMissing ? "Wähle noch dein Bundesland." : "Bitte den eingegebenen Wert prüfen. Noch nicht gespeichert.");
+      return false;
+    }
+    const payload = Object.fromEntries([...captured.keys()].map(key => [key, fullPayload[key]]));
+    let failed = false;
+    setSettingsStatus("saving", "Wird gespeichert …");
+    const job = (async () => {
+      try {
+        const result = await api("api/settings", { method: "POST", body: JSON.stringify(payload), keepalive: true });
+        state.settings = result.settings;
+        captured.forEach((revision, key) => {
+          if (state.pendingSettings.get(key) === revision) state.pendingSettings.delete(key);
+        });
+        if (!state.pendingSettings.has("vacation_allowance_by_year")) {
+          state.vacationAllowancesDraft = { ...(result.settings.vacation_allowance_by_year || {}) };
+          state.vacationYearDirty = false;
+        }
+        state.settingsRetryDelay = 2000;
+        await loadYear(state.loadedYear, true, true);
+        updateSettingsControls();
+        setSettingsStatus(state.pendingSettings.size ? "pending" : "saved", state.pendingSettings.size ? "Weitere Änderungen werden gespeichert …" : "Automatisch gespeichert");
+        return true;
+      } catch (error) {
+        failed = true;
+        setSettingsStatus("error", `Noch nicht gespeichert. ${error.message} Neuer Versuch folgt automatisch.`);
+        if (state.settingsRetryDelay === 2000) toast("Einstellungen noch nicht gespeichert. Neuer Versuch folgt automatisch.", true);
+        return false;
+      }
+    })();
+    state.settingsSavePromise = job;
+    try { return await job; }
+    finally {
+      state.settingsSavePromise = null;
+      if (state.pendingSettings.size) {
+        const delay = failed ? state.settingsRetryDelay : Math.max(0, (state.settingsNextSaveAt || 0) - Date.now());
+        if (failed) state.settingsRetryDelay = Math.min(30000, state.settingsRetryDelay * 2);
+        state.settingsSaveTimer = setTimeout(() => { void saveSettings(); }, delay);
+      }
+    }
   }
 
   async function importBackup(event) {
@@ -1149,10 +1257,19 @@
     if (!window.confirm("Die Sicherung ersetzt alle aktuellen Einträge. Fortfahren?")) { event.target.value = ""; return; }
     try {
       const payload = JSON.parse(await file.text());
+      // Finish any older save before replacing settings from the backup.
+      clearTimeout(state.settingsSaveTimer);
+      if (state.settingsSavePromise) await state.settingsSavePromise;
+      clearTimeout(state.settingsSaveTimer);
       const result = await api("api/import", { method: "POST", body: JSON.stringify(payload) });
+      state.pendingSettings.clear();
+      state.vacationYearDirty = false;
       toast(`${result.imported} Einträge wiederhergestellt`);
       await loadYear(new Date().getFullYear(), true);
-    } catch (error) { toast(error.message || "Sicherung konnte nicht gelesen werden", true); }
+    } catch (error) {
+      toast(error.message || "Sicherung konnte nicht gelesen werden", true);
+      if (state.pendingSettings.size) state.settingsSaveTimer = setTimeout(() => { void saveSettings(); }, 2000);
+    }
     event.target.value = "";
   }
 
@@ -1160,6 +1277,7 @@
     const service = $("#settingLiveService").value.trim();
     if (!service) return toast("Bitte zuerst die mobile_app-Aktion eintragen", true);
     try {
+      await saveSettings();
       await api("api/settings", {
         method: "POST",
         body: JSON.stringify({ live_activity_service: service }),
@@ -1170,6 +1288,13 @@
   }
 
   function bindEvents() {
+    $("#balanceChip").addEventListener("click", () => { renderAccountSummary(); $("#balanceDialog").showModal(); });
+    $("#closeAccount").addEventListener("click", () => $("#balanceDialog").close());
+    $("#accountReports").addEventListener("click", async () => {
+      $("#balanceDialog").close();
+      if (state.loadedYear !== new Date().getFullYear()) await loadYear(new Date().getFullYear(), true);
+      setView("reports");
+    });
     $$(".nav-item[data-view]").forEach(button => button.addEventListener("click", () => setView(button.dataset.view)));
     $$("[data-go]").forEach(button => button.addEventListener("click", () => setView(button.dataset.go)));
     ["#openEntry", "#mobileAdd"].forEach(selector => $(selector).addEventListener("click", () => { state.entryReturnView = null; openEntryDialog(state.selectedDay); }));
@@ -1233,7 +1358,7 @@
     $("#cancelEntry").addEventListener("click", () => { state.entryReturnView = null; $("#entryDialog").close(); });
     $(".dialog-close").addEventListener("click", () => { state.entryReturnView = null; $("#entryDialog").close(); });
     $("#deleteEntry").addEventListener("click", deleteCurrentEntry);
-    $("#settingsForm").addEventListener("submit", saveSettings);
+    $("#settingsForm").addEventListener("submit", event => { event.preventDefault(); void saveSettings(); });
     $$(".settings-card > .settings-heading").forEach(heading => heading.addEventListener("click", () => {
       const section = heading.closest(".settings-card");
       const open = !section.classList.contains("is-open");
@@ -1246,8 +1371,11 @@
       heading.setAttribute("aria-expanded", String(open));
       section.querySelector(".settings-panel")?.setAttribute("aria-hidden", String(!open));
     }));
-    $("#settingsForm").addEventListener("input", () => $("#settingsForm").classList.add("is-dirty"));
-    $("#settingsForm").addEventListener("change", () => $("#settingsForm").classList.add("is-dirty"));
+    $("#settingsForm").addEventListener("input", scheduleSettingsSave);
+    $("#settingsForm").addEventListener("change", scheduleSettingsSave);
+    $("#settingsForm").addEventListener("focusout", event => {
+      if (settingFieldKeys[event.target.id] && state.pendingSettings.size) void saveSettings();
+    });
     $$(".settings-panel .switch-row input[type='checkbox']").forEach(input => input.addEventListener("change", updateSettingsControls));
     $("#settingMilestoneStyle").addEventListener("change", renderNotificationExamples);
     $$("#dailyTargetGrid input").forEach(input => input.addEventListener("input", () => {
@@ -1258,13 +1386,17 @@
     $("#settingMonthlyGross").addEventListener("input", renderNotificationExamples);
     $("#settingVacationYear").addEventListener("change", event => {
       event.stopPropagation();
-      if (state.vacationYearDirty) state.vacationAllowancesDraft[String(state.vacationYear)] = Number($("#settingVacation").value);
+      if (state.vacationYearDirty && $("#settingVacation").value !== "" && $("#settingVacation").validity.valid) state.vacationAllowancesDraft[String(state.vacationYear)] = Number($("#settingVacation").value);
       state.vacationYear = Number(event.target.value) || new Date().getFullYear();
       state.vacationYearDirty = false;
       $("#settingVacation").value = state.vacationAllowancesDraft[String(state.vacationYear)] ?? Number($("#settingVacationDefault").value);
       renderVacationSettings();
     });
-    $("#settingVacation").addEventListener("input", () => { state.vacationYearDirty = true; renderVacationSettings(); });
+    $("#settingVacation").addEventListener("input", () => {
+      state.vacationYearDirty = true;
+      if ($("#settingVacation").value !== "" && $("#settingVacation").validity.valid) state.vacationAllowancesDraft[String(state.vacationYear)] = Number($("#settingVacation").value);
+      renderVacationSettings();
+    });
     $("#settingCarry").addEventListener("input", renderVacationSettings);
     $("#settingVacationDefault").addEventListener("input", () => {
       if (!state.vacationYearDirty && state.vacationAllowancesDraft[String(state.vacationYear)] === undefined) $("#settingVacation").value = $("#settingVacationDefault").value;
@@ -1288,6 +1420,11 @@
     window.addEventListener("hashchange", () => {
       const name = location.hash.slice(1);
       if (["dashboard", "calendar", "reports", "settings"].includes(name)) setView(name);
+    });
+    window.addEventListener("online", () => { if (state.pendingSettings.size) void saveSettings(); });
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden" && state.pendingSettings.size) void saveSettings(); });
+    window.addEventListener("beforeunload", event => {
+      if (state.pendingSettings.size || state.settingsSavePromise) { event.preventDefault(); event.returnValue = ""; }
     });
   }
 
