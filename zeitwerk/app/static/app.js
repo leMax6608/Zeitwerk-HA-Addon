@@ -44,7 +44,7 @@
     const dark = safePreference === "dark" || (safePreference === "system" && themeMedia.matches);
     document.documentElement.dataset.theme = dark ? "dark" : "light";
     document.documentElement.dataset.themePreference = safePreference;
-    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#101616" : "#f6f7f5");
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#111216" : "#f5f5f7");
     if (remember) localStorage.setItem("zeitwerk-theme", safePreference);
   }
 
@@ -352,6 +352,15 @@
     $("#resumeTimer").disabled = busy || !active || !paused;
   }
 
+  function updateTimerProgress(seconds, targetMinutes) {
+    const percent = targetMinutes > 0 ? Math.min(100, Math.round(seconds / (targetMinutes * 60) * 100)) : 0;
+    const orbit = $("#timerOrbit");
+    orbit.style.setProperty("--progress", `${percent * 3.6}deg`);
+    orbit.style.setProperty("--progress-percent", `${percent}%`);
+    orbit.setAttribute("aria-label", `${percent} Prozent des Tagesziels erreicht`);
+    $("#timerOrbitPercent").textContent = `${percent}%`;
+  }
+
   function renderTimer() {
     clearInterval(state.ticker);
     const card = $(".timer-card");
@@ -380,6 +389,7 @@
       $("#metaStart").textContent = lastTimed?.start_time?.slice(0, 5) || "–";
       $("#metaEnd").textContent = lastTimed?.end_time?.slice(0, 5) || "–";
       $("#startTimer").innerHTML = `<svg aria-hidden="true"><use href="#i-play"></use></svg>Arbeit starten`;
+      updateTimerProgress(lastTimed?.net_work_seconds || 0, targetPerDay(new Date()));
       return;
     }
     state.selectedTimerType = active.type;
@@ -399,6 +409,7 @@
         : "Tagesziel erreicht";
       $("#breakTimerHint").textContent = active.is_paused ? "Gesamte Pause läuft weiter" : values.breakSeconds ? "Pause heute gesamt" : "Noch keine Pause";
       $("#todayEarnings").textContent = formatMoney(grossForMinutes(active.work_date, values.netSeconds / 60));
+      updateTimerProgress(values.netSeconds, targetPerDay(active.work_date));
     };
     tick(); state.ticker = setInterval(tick, 1000);
   }
@@ -461,19 +472,26 @@
   function renderCalendar() {
     const shown = state.calendarDate;
     $("#calendarMonth").textContent = `${MONTHS[shown.getMonth()]} ${shown.getFullYear()}`;
+    const monthKey = `${shown.getFullYear()}-${String(shown.getMonth() + 1).padStart(2, "0")}`;
+    const monthEntries = state.entries.filter(entry => entry.work_date.startsWith(monthKey) && ["B", "H", "X"].includes(entry.type));
+    const monthMinutes = monthEntries.reduce((sum, entry) => sum + (entry.worked_minutes || 0), 0);
+    $("#calendarSummary").textContent = `${monthEntries.length} ${monthEntries.length === 1 ? "Arbeitstag" : "Arbeitstage"} · ${formatDuration(monthMinutes)} Std. erfasst`;
     const first = new Date(shown.getFullYear(), shown.getMonth(), 1);
     const offset = (first.getDay() + 6) % 7;
     const start = new Date(first); start.setDate(start.getDate() - offset);
+    const weeks = Math.ceil((offset + new Date(shown.getFullYear(), shown.getMonth() + 1, 0).getDate()) / 7);
     const todayKey = isoDate(new Date());
     const cells = [];
-    for (let i = 0; i < 42; i++) {
+    for (let i = 0; i < weeks * 7; i++) {
       const day = new Date(start); day.setDate(start.getDate() + i);
       const key = isoDate(day);
       const entry = entriesOn(key)[0];
       let label = "";
       if (entry) {
-        const value = entry.start_time ? `${formatDuration(minutesOn(key))} Std.` : entry.type_label;
-        label = `<div class="calendar-entry type-${entry.type}"><b>${entry.type}</b><span>${escapeHTML(value)}</span></div>`;
+        const duration = formatDuration(minutesOn(key));
+        const value = entry.start_time ? `${entry.type === "H" ? "Homeoffice" : "Arbeit"} · ${duration}` : entry.type_label;
+        const compact = entry.start_time ? duration : entry.type;
+        label = `<span class="calendar-entry type-${escapeHTML(entry.type)}"><i aria-hidden="true"></i><span class="calendar-entry-label">${escapeHTML(value)}</span><span class="calendar-entry-compact">${escapeHTML(compact)}</span></span>`;
       }
       const dayLabel = new Intl.DateTimeFormat("de-DE", { weekday: "long", day: "2-digit", month: "long", year: "numeric" }).format(day);
       cells.push(`<button type="button" class="calendar-day ${day.getMonth() !== shown.getMonth() ? "muted" : ""} ${key === todayKey ? "today" : ""} ${key === state.calendarDay ? "selected" : ""} ${entry ? "has-entry" : ""}" data-date="${key}" aria-label="${escapeHTML(dayLabel)}${entry ? `, ${entry.start_time ? `${formatDuration(minutesOn(key))} Stunden` : entry.type_label}` : ", kein Eintrag"}"><span class="day-number">${day.getDate()}</span>${label}</button>`);
@@ -655,6 +673,7 @@
     if (!$("#xExtraDate").value) $("#xExtraDate").value = isoDate(new Date());
     const selectedX = state.entries.find(entry => entry.work_date === $("#xExtraDate").value && entry.type === "X");
     if (selectedX) $("#xExtraDuration").value = formatHoursMinutes(selectedX.extra_work_minutes || 0);
+    $("#settingsForm").classList.remove("is-dirty");
   }
 
   function renderNotificationExamples() {
@@ -992,6 +1011,18 @@
     $(".dialog-close").addEventListener("click", () => { state.entryReturnView = null; $("#entryDialog").close(); });
     $("#deleteEntry").addEventListener("click", deleteCurrentEntry);
     $("#settingsForm").addEventListener("submit", saveSettings);
+    $$(".settings-card > .settings-heading").forEach(heading => heading.addEventListener("click", () => {
+      const section = heading.closest(".settings-card");
+      const open = !section.classList.contains("is-open");
+      $$(".settings-card.is-open").forEach(item => {
+        item.classList.remove("is-open");
+        item.querySelector(".settings-heading")?.setAttribute("aria-expanded", "false");
+      });
+      section.classList.toggle("is-open", open);
+      heading.setAttribute("aria-expanded", String(open));
+    }));
+    $("#settingsForm").addEventListener("input", () => $("#settingsForm").classList.add("is-dirty"));
+    $("#settingsForm").addEventListener("change", () => $("#settingsForm").classList.add("is-dirty"));
     $("#settingMilestoneStyle").addEventListener("change", renderNotificationExamples);
     $$("#dailyTargetGrid input").forEach(input => input.addEventListener("input", () => {
       const total = Array.from({ length: 7 }, (_, index) => minutesFromTime($(`#settingDay${index}`).value)).reduce((sum, value) => sum + value, 0);

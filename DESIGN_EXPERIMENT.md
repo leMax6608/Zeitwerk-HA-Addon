@@ -14,12 +14,14 @@ python zeitwerk/app/server.py
 
 Danach `http://127.0.0.1:18109/` im Browser öffnen. Der getrennte Datenordner verhindert, dass die Vorschau produktive Zeitdaten nutzt. Der Entwicklungsserver lauscht derzeit auf allen Netzwerkinterfaces; die Vorschau deshalb nur in einem vertrauenswürdigen Netzwerk starten und nach dem Test mit `Strg+C` beenden.
 
-## Umfang
+## Designrichtung
 
-- Helles, ruhiges Designsystem mit einem zurückhaltenden Akzent; Dunkelmodus bleibt erhalten.
-- Selektives Liquid Glass für Navigation und Dialoge, überwiegend deckende Inhaltsflächen.
-- Neue Komposition für Heute, Kalender, Auswertung und gruppierte Einstellungen.
-- Mobile Bottom-Navigation und iPhone-gerechte Dialog-Sheets.
-- Fallbacks für fehlenden Blur sowie reduzierte Transparenz und Bewegung.
+- Zeit und Fortschritt stehen auf „Heute“ visuell vor allen Nebenwerten. Der laufende Tag bekommt einen großen Zähler mit Tagesziel-Fortschritt; nach Feierabend steht die Zusammenfassung im Vordergrund.
+- Die Desktop-Version nutzt eine feste Seitennavigation, mobil bleibt die schwebende Bottom-Navigation. Der Glaseffekt sitzt an Navigation und Dialogen, nicht auf jeder Inhaltsfläche.
+- Die Einstellungen beginnen mit einer kompakten Übersicht. Jeweils ein Bereich öffnet sich zum Bearbeiten; der Speichern-Button erscheint erst nach einer Änderung.
+- Der Kalender zeigt nur die tatsächlich benötigten vier bis sechs Wochen. Einträge werden als kleine Punkte mit Kurztext oder Dauer angezeigt; Kürzel und Tagestypen sind aufklappbar. Ein Tag öffnet seine eigene Detailansicht.
+- Die Auswertung trennt Kennzahlen, Wochentagsrhythmus, Erfolge und Monatsverlauf. Helles Design, Dunkelmodus sowie reduzierte Transparenz und Bewegung bleiben erhalten.
+
+Die zweite Iteration liegt in `zeitwerk/app/static/ios-next.css`, zusätzlich zu den Basiskomponenten in `styles.css`. So kann das Experiment leicht entfernt oder weiterentwickelt werden, ohne den produktiven Zweig zu berühren.
 
 Es wurden keine API-, Datenbank- oder Berechnungsregeln geändert. Zum Prüfen: `python -m unittest discover -s tests -v`.
