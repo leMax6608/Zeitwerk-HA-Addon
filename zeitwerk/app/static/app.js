@@ -418,10 +418,14 @@
     const target = targetPerDay(entry.work_date);
     const delta = entry.worked_minutes - target;
     const isX = entry.type === "X";
-    $("#finishedLead").textContent = isX ? "Tagesziel erfüllt." : "Feierabend.";
+    $("#finishedLead").textContent = isX ? "Für heute verbucht" : "Netto-Arbeitszeit";
     $("#finishedHeadline").textContent = isX ? "Für heute sind" : "Heute hast du";
-    $("#finishedUnit").textContent = isX ? "verbucht." : "gearbeitet.";
+    $("#finishedUnit").textContent = isX ? "Stunden verbucht" : "Stunden gearbeitet";
     $("#finishedDuration").textContent = formatDuration(entry.worked_minutes);
+    const progress = target > 0 ? Math.min(100, Math.round(entry.worked_minutes / target * 100)) : 100;
+    $("#finishedProgress").style.setProperty("--finished-progress", `${progress}%`);
+    $("#finishedProgress").setAttribute("aria-valuenow", String(progress));
+    $("#finishedGoalLabel").textContent = target > 0 ? `${progress} % von ${formatDuration(target)} Std. Tagesziel` : "Kein Tagesziel an diesem Tag";
     $("#finishedSpanLabel").textContent = isX ? "Erfassung" : "Beginn – Ende";
     $("#finishedSpan").textContent = isX ? "Ohne Uhrzeit" : `${entry.start_time?.slice(0, 5) || "–"} – ${entry.end_time?.slice(0, 5) || "–"}`;
     $("#finishedBreak").textContent = isX ? "–" : formatDuration(entry.recorded_break_minutes);
