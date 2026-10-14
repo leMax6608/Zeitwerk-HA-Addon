@@ -49,8 +49,10 @@ function element(selector) {
   return elements.get(selector);
 }
 let target = 480;
+const progressLayers = helper("weekBarProgress");
 const render = helper("renderFinishedCard", {
   $: element, targetPerDay: () => target,
+  weekBarProgress: progressLayers,
   formatDuration: minutes => `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2,"0")}`,
   formatMoney: String, formatSigned: String,
 });
@@ -60,10 +62,38 @@ for (const [minutes, percent, fill] of [[240, 50, 50], [480, 100, 100], [576, 12
   assert.equal(element("#finishedProgress").properties["--finished-progress"], `${fill}%`);
   assert.equal(element("#finishedProgress").attributes["aria-valuenow"], String(fill));
   assert.equal(element("#finishedProgress").attributes["aria-valuetext"], `${percent} % des Tagesziels erreicht`);
+  assert.equal(element("#finishedProgress").properties["--finished-overtime"], `${Math.max(0, Math.min(100, percent - 100))}%`);
+  assert.equal(element("#finishedColorKey").hidden, percent <= 100);
+  assert.equal(element("#finishedDaySymbol").attributes.href, percent >= 100 ? "#i-complete" : "#i-clock");
 }
+const timerProgress = helper("updateTimerProgress", { $: element, weekBarProgress: progressLayers });
+timerProgress(576 * 60, 480);
+assert.equal(element("#timerOrbitPercent").textContent, "120%");
+assert.equal(element("#timerOrbit").properties["--overtime-percent"], "20%");
+assert.equal(element("#timerOrbit").properties["--overtime-progress"], "72deg");
+timerProgress(240 * 60, 480);
+assert.equal(element("#timerOrbit").properties["--overtime-percent"], "0%");
+assert.equal(element("#timerOrbit").properties["--progress-percent"], "50%");
+const milestones = helper("collectionMilestones");
+const split = helper("splitCollections");
+const empty = milestones({});
+assert.equal(empty.length, 19);
+assert.equal(new Set(empty.map(badge => badge.name)).size, 19);
+const emptyGroups = split(empty);
+assert.equal(emptyGroups.next.length, 6);
+assert.equal(emptyGroups.later.length, 13);
+assert.equal(emptyGroups.earned.length, 0);
+const some = split(milestones({ entries: 12, goals: 10, streak: 5, pauses: 5, notes: 5, weeks: 4 }));
+assert.equal(some.earned.length, 8);
+assert.ok(some.next.every(badge => badge.value < badge.goal));
+assert.equal(new Set(some.next.map(badge => badge.category)).size, some.next.length);
+const all = split(milestones({ entries: 1000, goals: 1000, streak: 1000, pauses: 1000, notes: 1000, weeks: 1000 }));
+assert.equal(all.earned.length, 19);
+assert.equal(all.next.length, 0);
+assert.equal(all.later.length, 0);
 target = 0;
 render({ type: "B", worked_minutes: 60, recorded_break_minutes: 0 });
 assert.equal(element("#finishedGoalLabel").textContent, "Kein Tagesziel an diesem Tag");
 const html = fs.readFileSync(path.join(__dirname, "../zeitwerk/app/static/index.html"), "utf8");
 assert.ok(!html.includes('id="finishedTarget"'), "Only the target below the bar remains");
-console.log("Day insights: live account, ISO weeks, period totals and end-of-day progress passed.");
+console.log("Day insights: live account, ISO weeks, period totals, overtime layers and 19 collections passed.");

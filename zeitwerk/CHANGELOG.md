@@ -1,5 +1,11 @@
 # Änderungsverlauf
 
+## 5.2.0
+
+- Sammlung auf 19 Meilensteine erweitert; pro Kategorie steht die nächste Stufe im Vordergrund, weitere Ziele und erreichte Erfolge sind aufklappbar
+- Größeres rundes Abschluss-Symbol mit Haken statt Sonne; ein noch nicht erfülltes Tagessoll bekommt ein neutrales Uhrsymbol
+- Überstunden füllen den Tagesziel-Balken und den laufenden Fortschritt ein zweites Mal violett; Prozentanzeigen bleiben auch über 100 % sichtbar
+
 ## 5.1.1
 
 - Feierabendansicht nennt das Tagessoll nur noch unter dem Fortschrittsbalken

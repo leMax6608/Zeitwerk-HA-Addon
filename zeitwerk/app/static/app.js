@@ -484,10 +484,13 @@
   }
 
   function updateTimerProgress(seconds, targetMinutes) {
-    const percent = targetMinutes > 0 ? Math.min(100, Math.round(seconds / (targetMinutes * 60) * 100)) : 0;
+    const layers = weekBarProgress(seconds / 60, targetMinutes);
+    const percent = targetMinutes > 0 ? Math.round(seconds / (targetMinutes * 60) * 100) : 0;
     const orbit = $("#timerOrbit");
-    orbit.style.setProperty("--progress", `${percent * 3.6}deg`);
-    orbit.style.setProperty("--progress-percent", `${percent}%`);
+    orbit.style.setProperty("--progress", `${layers.goalPercent * 3.6}deg`);
+    orbit.style.setProperty("--progress-percent", `${layers.goalPercent}%`);
+    orbit.style.setProperty("--overtime-progress", `${targetMinutes > 0 ? layers.overtimePercent * 3.6 : 0}deg`);
+    orbit.style.setProperty("--overtime-percent", `${targetMinutes > 0 ? layers.overtimePercent : 0}%`);
     orbit.setAttribute("aria-label", `${percent} Prozent des Tagesziels erreicht`);
     $("#timerOrbitPercent").textContent = `${percent}%`;
   }
@@ -562,6 +565,9 @@
     $("#dayNoteSummary").textContent = entry.note ? "Tagesnotiz ansehen oder bearbeiten" : "Tagesnotiz hinzufügen";
     const target = targetPerDay(entry.work_date);
     const delta = entry.worked_minutes - target;
+    const completed = delta >= 0;
+    $(".finished-day-icon").classList.toggle("is-goal-met", completed);
+    $("#finishedDaySymbol").setAttribute("href", completed ? "#i-complete" : "#i-clock");
     const isX = entry.type === "X";
     $("#finishedLead").textContent = isX ? "Für heute verbucht" : "Deine Arbeitszeit heute";
     $("#finishedHeadline").textContent = isX ? "Für heute sind" : "Heute hast du";
@@ -570,6 +576,10 @@
     const progress = target > 0 ? Math.round(entry.worked_minutes / target * 100) : 100;
     const fill = Math.min(100, progress);
     $("#finishedProgress").style.setProperty("--finished-progress", `${fill}%`);
+    const overtime = target > 0 ? weekBarProgress(entry.worked_minutes, target).overtimePercent : 0;
+    $("#finishedProgress").style.setProperty("--finished-overtime", `${overtime}%`);
+    $("#finishedProgress").classList.toggle("has-overtime", overtime > 0);
+    $("#finishedColorKey").hidden = overtime <= 0;
     $("#finishedProgress").setAttribute("aria-valuenow", String(fill));
     $("#finishedProgress").setAttribute("aria-valuetext", target > 0 ? `${progress} % des Tagesziels erreicht` : "Kein Tagesziel an diesem Tag");
     $("#finishedGoalLabel").textContent = target > 0 ? `${progress} % von ${formatDuration(target)} Std. Tagesziel` : "Kein Tagesziel an diesem Tag";
@@ -893,14 +903,8 @@
     $("#bestStreak").textContent = bestStreak;
     const pauses = finishedWork.filter(entry => ["B", "H"].includes(entry.type) && entry.required_break_minutes > 0 && entry.qualified_break_minutes >= entry.required_break_minutes).length;
     const notes = finishedWork.filter(entry => (entry.note || "").trim()).length;
-    const badges = [
-      ["Erster Eintrag", "Ein abgeschlossener Arbeitstag", finishedWork.length, 1, "i-edit"],
-      ["Im Rhythmus", "Fünf Tagesziele in Folge", bestStreak, 5, "i-flame"],
-      ["Gut geschafft", "Zehn Tagesziele erfüllt", goalsReached, 10, "i-shield"],
-      ["Pausen im Blick", "Fünf Tage mit ausreichender Pause", pauses, 5, "i-sun"],
-      ["Festgehalten", "Fünf Tage mit einer Notiz", notes, 5, "i-edit"],
-    ];
-    $("#reportBadges").innerHTML = badges.map(([name, detail, value, goal, icon]) => `<article class="report-badge ${value >= goal ? "earned" : ""}"><svg aria-hidden="true"><use href="#${icon}"></use></svg><div><b>${name}</b><small>${detail}</small><span>${Math.min(value, goal)} / ${goal}${value >= goal ? " · Erreicht" : ""}</span><progress max="${goal}" value="${Math.min(value, goal)}" aria-label="${name}"></progress></div></article>`).join("");
+    const weeks = new Set(finishedWork.map(entry => { const value = calendarWeek(parseISO(entry.work_date)); return `${value.year}-${value.week}`; })).size;
+    renderCollections({ entries: finishedWork.length, goals: goalsReached, streak: bestStreak, pauses, notes, weeks });
     renderPeriodList();
     if ($("#periodDialog").open && state.selectedPeriod) renderPeriodDetails(state.selectedPeriod);
   }
@@ -911,6 +915,43 @@
     const year = date.getUTCFullYear();
     const week = Math.ceil((((date - new Date(Date.UTC(year, 0, 1))) / 86400000) + 1) / 7);
     return { year, week };
+  }
+
+  function collectionMilestones(metrics) {
+    const groups = [
+      ["entries", "i-edit", "abgeschlossene Arbeitstage", [[1, "Erster Eintrag"], [10, "Gut dokumentiert"], [25, "Dein Zeitjournal"], [100, "Einträge-Profi"]]],
+      ["goals", "i-complete", "erfüllte Tagesziele", [[10, "Gut geschafft"], [25, "Auf Kurs"], [50, "Zielroutine"]]],
+      ["streak", "i-flame", "Tagesziele in Folge", [[5, "Im Rhythmus"], [10, "Stabile Serie"], [20, "Dein Rhythmus"]]],
+      ["pauses", "i-pause", "Tage mit ausreichender Pause", [[5, "Pausen im Blick"], [15, "Gut erholt"], [30, "Pausenroutine"]]],
+      ["notes", "i-edit", "Tage mit einer Notiz", [[5, "Festgehalten"], [15, "Dein Rückblick"], [30, "Notizen-Routine"]]],
+      ["weeks", "i-calendar", "Wochen mit erfassten Arbeitstagen", [[1, "Eine Woche im Blick"], [4, "Wochenrhythmus"], [12, "Langfristig im Blick"]]],
+    ];
+    return groups.flatMap(([category, icon, detail, goals]) => goals.map(([goal, name]) => ({ category, icon, goal, name, detail: goal === 1 ? (category === "entries" ? "Ein abgeschlossener Arbeitstag" : "Eine Woche mit erfassten Arbeitstagen") : `${goal} ${detail}`, value: Math.max(0, Number(metrics[category]) || 0) })));
+  }
+
+  function splitCollections(badges) {
+    const seen = new Set();
+    const next = [], later = [], earned = [];
+    badges.forEach(badge => {
+      if (badge.value >= badge.goal) earned.push(badge);
+      else if (!seen.has(badge.category)) { seen.add(badge.category); next.push(badge); }
+      else later.push(badge);
+    });
+    return { next, later, earned };
+  }
+
+  function renderCollections(metrics) {
+    const badges = collectionMilestones(metrics);
+    const groups = splitCollections(badges);
+    const markup = badge => `<article class="report-badge ${badge.value >= badge.goal ? "earned" : ""}"><svg aria-hidden="true"><use href="#${badge.icon}"></use></svg><div><b>${badge.name}</b><small>${badge.detail}</small><span>${Math.min(badge.value, badge.goal)} / ${badge.goal}${badge.value >= badge.goal ? " · Erreicht" : ""}</span><progress max="${badge.goal}" value="${Math.min(badge.value, badge.goal)}" aria-label="${badge.name}"></progress></div></article>`;
+    $("#reportBadges").innerHTML = groups.next.map(markup).join("") || '<p class="collection-complete">Alle Meilensteine dieses Jahres erreicht. Deine Sammlung findest du unten.</p>';
+    $("#collectionCount").textContent = `${groups.earned.length} / ${badges.length} erreicht · ${state.loadedYear}`;
+    $("#laterBadgeCount").textContent = groups.later.length;
+    $("#earnedBadgeCount").textContent = groups.earned.length;
+    $("#laterBadges").innerHTML = groups.later.map(markup).join("");
+    $("#earnedBadges").innerHTML = groups.earned.map(markup).join("");
+    $("#laterCollections").classList.toggle("hidden", groups.later.length === 0);
+    $("#earnedCollections").classList.toggle("hidden", groups.earned.length === 0);
   }
 
   function periodSummary(period) {
