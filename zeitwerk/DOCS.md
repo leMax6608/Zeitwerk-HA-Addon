@@ -22,7 +22,7 @@ Das Zahnrad auf **Heute** öffnet einen optionalen Überstundenplan für diesen 
 
 **Fahrt zur Arbeit** markiert einen Tag mit Arbeitsweg für deine Jahresübersicht. Sie zählt weder Fahrtdauer noch zusätzliche Arbeitszeit.
 
-Die Zeitkonto-Anzeige öffnet eine Übersicht mit angerechneter Zeit, Soll bis heute und Übertrag. Dieser Stand bleibt aktuell, auch wenn der Kalender ein anderes Jahr zeigt. Einträge vor deinem eingestellten Berechnungsbeginn sind weiterhin sichtbar, werden aber nicht ins Zeitkonto gerechnet.
+Die Zeitkonto-Anzeige öffnet eine Übersicht mit angerechneter Zeit, Soll bis heute und Übertrag. Während laufender Arbeit aktualisiert sie sich live. Im Fenster siehst du außerdem den **Stand vor heute**, ohne heutige Stunden und ohne heutiges Soll, sowie die heutige Abweichung vom Soll. Der Stand oben in der Leiste bleibt inklusive heute. Er bleibt aktuell, auch wenn der Kalender ein anderes Jahr zeigt. Einträge vor deinem eingestellten Berechnungsbeginn sind weiterhin sichtbar, werden aber nicht ins Zeitkonto gerechnet.
 
 Die Balken beim **Wochenstand** füllen sich bis zum jeweiligen Tagessoll blau. Zusätzliche Zeit füllt denselben Balken ein zweites Mal von unten violett: zwei Überstunden bei acht Stunden Soll entsprechen beispielsweise einem Viertel des Balkens. Ohne Tagessoll ist geleistete Arbeit vollständig violett. Die genaue Dauer bleibt im Tagesprotokoll sichtbar, auch wenn die zweite Füllung bereits voll ist.
 
@@ -50,7 +50,15 @@ Für einen Feiertag oder anderen arbeitsfreien Tag nutze **Kalender → Freier T
 
 Unter **Einstellungen → Feiertage** kannst du optional dein Bundesland wählen und automatische Feiertage einschalten. Die Daten werden von OpenHolidays geladen und lokal zwischengespeichert. Du kannst einzelne automatische Tage ausschließen und wieder aktivieren. Manuelle Arbeitszeiten bleiben erhalten und haben Vorrang. Gemeindeabhängige Sonderfeiertage solltest du selbst eintragen; Mariä Himmelfahrt wird in Bayern beispielsweise nicht pauschal ergänzt.
 
-Unter **Einstellungen → Urlaub** findest du Anspruch und Resttage für das ausgewählte Jahr sowie deine Urlaubszeiträume. Du kannst Zeiträume direkt hinzufügen oder entfernen. Ein regulärer Anspruch dient als Standard für Jahre ohne eigene Festlegung. Beim Eintragen werden auch aktivierte automatische Feiertage übersprungen.
+Unter **Einstellungen → Urlaub** findest du Anspruch und Resttage für das ausgewählte Jahr sowie deine Urlaubszeiträume. Du kannst Zeiträume direkt hinzufügen, bearbeiten oder entfernen. **Bearbeiten** öffnet Anfang, Ende und Notiz für den ganzen Zeitraum. Änderungen ersetzen die alten Urlaubstage in einem einzigen Speichervorgang. Bei Konflikten bleiben die bisherigen Tage erhalten. Auch im Kalender öffnet ein Urlaubstag die Bearbeitung seines Zeitraums. Ein regulärer Anspruch dient als Standard für Jahre ohne eigene Festlegung. Beim Eintragen werden auch aktivierte automatische Feiertage übersprungen.
+
+## Auswertung und Feierabend
+
+Wechsle im Verlauf zwischen **Wochen** und **Monaten**. Ein Zeitraum öffnet die Tagesdetails. **Gearbeitet** zählt tatsächlich erfasste Arbeitszeit und X-Gutschriften; **angerechnet** enthält zusätzlich gutgeschriebene freie Tage ab dem Berechnungsbeginn. Der **Saldo** ist angerechnet minus Soll, ohne den Jahresübertrag. Laufende Zeiträume zeigen das Soll bis heute; zukünftige das geplante Soll. Alle Dauern sind Stunden:Minuten.
+
+Die Sammlung enthält kleine Meilensteine für Einträge, erfüllte Tagesziele, ausreichende Pausen und Tagesnotizen. Urlaub, Feiertage und andere gutgeschriebene freie Tage unterbrechen eine Zielserie nicht und zählen nicht selbst als erfüllte Arbeitsziele. Überstunden bringen keine zusätzlichen Punkte.
+
+Die freiwillige **Tagesnotiz** öffnet sich in einem eigenen Fenster und speichert nach einer kurzen Tipp-Pause automatisch. Bei einem Fehler bleibt das Fenster mit deiner Eingabe offen; ein neuer Speicherversuch folgt automatisch. „Fertig“ schließt erst nach erfolgreichem Speichern. Der kleine Feierabendmoment animiert nur das Sonnensymbol, einmal pro Tag und Gerät. Unter **Darstellung** ist er abschaltbar; bei reduzierter Bewegung bleibt er aus.
 
 Geplanter Urlaub reduziert den angezeigten Resturlaub sofort. Im Zeitkonto wird der Urlaubstag erst an seinem jeweiligen Datum berücksichtigt.
 

@@ -77,6 +77,16 @@
     settingsSaveTimer: null,
     settingsSavePromise: null,
     settingsRetryDelay: 2000,
+    vacationEditing: null,
+    reportMode: "month",
+    reportPeriods: [],
+    selectedPeriod: null,
+    noteRevision: 0,
+    noteSavedRevision: 0,
+    noteSaveTimer: null,
+    noteSavePromise: null,
+    noteRetryDelay: 2000,
+    refreshBusy: false,
   };
 
   async function api(path, options = {}) {
@@ -400,7 +410,9 @@
   function renderAccountSummary() {
     const account = state.currentAccount;
     if (!account) return;
-    const balance = Number(account.balance_minutes || 0);
+    const activeInScope = state.active && state.active.work_date >= (state.settings.tracking_start_date || "") && state.active.work_date.startsWith(String(new Date().getFullYear()));
+    const liveDifference = activeInScope ? liveAccountMinutes(liveTimerValues(), state.settings) - Number(account.today_account_minutes || 0) : 0;
+    const balance = Number(account.balance_minutes || 0) + liveDifference;
     $("#sidebarBalance").textContent = formatSigned(balance);
     $("#balanceChip").classList.toggle("negative", balance < 0);
     $("#balanceChip").classList.toggle("positive", balance > 0);
@@ -408,22 +420,26 @@
     $("#accountDialogBalance").textContent = formatSigned(balance);
     $("#accountDialogBalance").classList.toggle("negative", balance < 0);
     $("#accountDialogHint").textContent = balance > 0 ? "Plusstunden gesammelt" : balance < 0 ? "Aktuell unter dem Soll" : "Dein Zeitkonto ist ausgeglichen";
-    $("#accountRecorded").textContent = formatDuration(account.account_minutes);
+    $("#accountRecorded").textContent = formatDuration(Number(account.account_minutes || 0) + liveDifference);
     $("#accountTarget").textContent = formatDuration(account.target_minutes);
     $("#accountCarry").textContent = formatSigned(account.previous_balance_minutes);
+    $("#accountBeforeToday").textContent = formatSigned(account.balance_before_today_minutes);
+    $("#accountTodayDelta").textContent = formatSigned(Number(account.today_account_minutes || 0) + liveDifference - Number(account.today_target_minutes || 0));
     const yearStart = `${new Date().getFullYear()}-01-01`;
     const start = state.settings.tracking_start_date > yearStart ? state.settings.tracking_start_date : yearStart;
     $("#accountPeriod").textContent = `Berechnet ab ${new Intl.DateTimeFormat("de-DE").format(parseISO(start))} · Stand heute`;
   }
 
   function liveTimerValues() {
-    if (!state.active) return { elapsedSeconds: 0, breakSeconds: 0, netSeconds: 0 };
+    if (!state.active) return { elapsedSeconds: 0, breakSeconds: 0, netSeconds: 0, qualifiedMinutes: 0 };
     const now = new Date();
     const [h, m, s = 0] = state.active.start_time.split(":").map(Number);
     const start = parseISO(state.active.work_date);
     start.setHours(h, m, s, 0);
     const elapsedSeconds = Math.max(0, Math.floor((now - start) / 1000));
     let breakSeconds = Number(state.active.manual_break_minutes || 0) * 60;
+    let recordedMinutes = Number(state.active.manual_break_minutes || 0);
+    let qualifiedMinutes = breakSeconds >= 900 ? breakSeconds / 60 : 0;
     state.active.breaks.forEach(segment => {
       const [sh, sm, ss = 0] = segment.start.split(":").map(Number);
       const breakStart = parseISO(state.active.work_date);
@@ -436,9 +452,20 @@
         breakEnd.setHours(eh, em, es, 0);
         if (breakEnd < breakStart) breakEnd.setDate(breakEnd.getDate() + 1);
       }
-      breakSeconds += Math.max(0, Math.floor((breakEnd - breakStart) / 1000));
+      const seconds = Math.max(0, Math.floor((breakEnd - breakStart) / 1000));
+      breakSeconds += seconds;
+      recordedMinutes += Math.floor(seconds / 60);
+      if (seconds >= 900) qualifiedMinutes += Math.floor(seconds / 60);
     });
-    return { elapsedSeconds, breakSeconds, netSeconds: Math.max(0, elapsedSeconds - breakSeconds) };
+    return { elapsedSeconds, breakSeconds, netSeconds: Math.max(0, elapsedSeconds - breakSeconds), qualifiedMinutes, ruleWorkMinutes: Math.max(0, Math.floor(elapsedSeconds / 60) - recordedMinutes) };
+  }
+
+  function liveAccountMinutes(values, settings) {
+    const rawMinutes = values.netSeconds / 60;
+    const ruleMinutes = values.ruleWorkMinutes ?? Math.floor(rawMinutes);
+    const required = settings.age_group === "minor" ? (ruleMinutes > 360 ? 60 : ruleMinutes > 270 ? 30 : 0) : ruleMinutes > 540 ? 45 : ruleMinutes > 360 ? 30 : 0;
+    const missing = values.qualifiedMinutes >= required ? 0 : Math.max(15, required - values.qualifiedMinutes);
+    return Math.max(0, rawMinutes - (settings.auto_break_deduction ? missing : 0));
   }
 
   function formatClock(seconds) {
@@ -506,6 +533,7 @@
     const tick = () => {
       const values = liveTimerValues();
       updateLiveWeekBar(active.work_date, values.netSeconds / 60);
+      renderAccountSummary();
       const remainingSeconds = Math.max(0, plannedTarget(active.work_date) * 60 - values.netSeconds);
       $("#workTimerValue").textContent = formatClock(values.netSeconds);
       $("#breakTimerValue").textContent = formatClock(values.breakSeconds);
@@ -531,8 +559,6 @@
     $("#finishedCard .finished-facts").classList.remove("hidden");
     $("#finishedDelta").classList.remove("hidden");
     $("#finishedNote").classList.remove("hidden");
-    $("#dayNoteEntryId").value = entry.id;
-    $("#dayNoteText").value = entry.note || "";
     $("#dayNoteSummary").textContent = entry.note ? "Tagesnotiz ansehen oder bearbeiten" : "Tagesnotiz hinzufügen";
     const target = targetPerDay(entry.work_date);
     const delta = entry.worked_minutes - target;
@@ -574,14 +600,70 @@
     $("#finishedNote").classList.add("hidden");
   }
 
+  function openDayNote() {
+    const entry = state.todayEntries.find(item => ["B", "H", "X"].includes(item.type) && (item.finalized || item.type === "X"));
+    if (!entry) return;
+    $("#dayNoteEntryId").value = entry.id;
+    $("#dayNoteText").value = entry.note || "";
+    state.noteRevision = state.noteSavedRevision = 0;
+    $("#dayNoteStatus").textContent = "Automatisch gespeichert";
+    $("#dayNoteDialog").showModal();
+  }
+
   async function saveDayNote(event) {
-    event.preventDefault();
-    try {
-      await api(`api/entries/${$("#dayNoteEntryId").value}/note`, { method: "POST", body: JSON.stringify({ note: $("#dayNoteText").value }) });
-      $("#dayNoteStatus").textContent = "Gespeichert";
-      await loadYear(state.loadedYear, true);
-      toast("Tagesnotiz gespeichert");
-    } catch (error) { toast(error.message, true); }
+    event?.preventDefault();
+    clearTimeout(state.noteSaveTimer);
+    if (state.noteSavePromise) return state.noteSavePromise;
+    if (state.noteRevision === state.noteSavedRevision) return true;
+    const revision = state.noteRevision;
+    const id = $("#dayNoteEntryId").value;
+    const note = $("#dayNoteText").value;
+    let failed = false;
+    const job = (async () => {
+      $("#dayNoteStatus").textContent = "Wird gespeichert …";
+      try {
+        await api(`api/entries/${id}/note`, { method: "POST", body: JSON.stringify({ note }), keepalive: true });
+        state.noteSavedRevision = revision;
+        state.noteRetryDelay = 2000;
+        [state.entries, state.todayEntries].forEach(entries => entries.filter(item => String(item.id) === id).forEach(item => { item.note = note; }));
+        $("#dayNoteSummary").textContent = note ? "Tagesnotiz ansehen oder bearbeiten" : "Tagesnotiz hinzufügen";
+        $("#dayNoteStatus").textContent = revision === state.noteRevision ? "Automatisch gespeichert" : "Weitere Änderungen werden gespeichert …";
+        return true;
+      } catch (error) {
+        failed = true;
+        $("#dayNoteStatus").textContent = "Noch nicht gespeichert. Neuer Versuch folgt automatisch.";
+        if (state.noteRetryDelay === 2000) toast(error.message, true);
+        return false;
+      }
+    })();
+    state.noteSavePromise = job;
+    try { return await job; }
+    finally {
+      state.noteSavePromise = null;
+      if (state.noteRevision !== state.noteSavedRevision) {
+        state.noteSaveTimer = setTimeout(() => { void saveDayNote(); }, failed ? state.noteRetryDelay : 400);
+        if (failed) state.noteRetryDelay = Math.min(30000, state.noteRetryDelay * 2);
+      }
+    }
+  }
+
+  async function closeDayNote() {
+    if (!await saveDayNote()) return;
+    if (state.noteRevision !== state.noteSavedRevision) { await saveDayNote(); }
+    if (state.noteRevision === state.noteSavedRevision) {
+      $("#dayNoteDialog").close();
+      await loadYear(state.loadedYear, true, true);
+    }
+  }
+
+  function celebrateAfterWork() {
+    const entry = state.todayEntries.find(item => ["B", "H"].includes(item.type) && item.finalized);
+    if (!entry || document.body.dataset.view !== "dashboard" || !state.settings.after_work_animation_enabled || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const key = `zeitwerk-after-work-${entry.work_date}`;
+    try { if (localStorage.getItem(key)) return; localStorage.setItem(key, "seen"); } catch { return; }
+    const icon = $(".finished-day-icon");
+    icon.classList.add("celebrate");
+    setTimeout(() => icon.classList.remove("celebrate"), 2400);
   }
 
   function updateDayPlanPreview() {
@@ -676,7 +758,7 @@
     const entry = entriesOn(day)[0];
     const target = targetPerDay(day);
     $("#calendarDayTitle").textContent = new Intl.DateTimeFormat("de-DE", { weekday: "long", day: "2-digit", month: "long", year: "numeric" }).format(parseISO(day));
-    $("#editCalendarDay").textContent = entry ? "Eintrag bearbeiten" : "Eintrag hinzufügen";
+    $("#editCalendarDay").textContent = entry?.type === "U" ? "Urlaubszeitraum bearbeiten" : entry ? "Eintrag bearbeiten" : "Eintrag hinzufügen";
     if (!entry) {
       $("#calendarDayContent").innerHTML = `<div class="calendar-day-state empty"><span class="calendar-day-symbol"><svg aria-hidden="true"><use href="#i-calendar"></use></svg></span><div><b>Noch kein Eintrag</b><p>${target ? `Tagesziel ${formatDuration(target)} Std.` : "Laut Arbeitsmodell frei."}</p></div></div>`;
       return;
@@ -745,8 +827,8 @@
     }
     select.value = String(year);
     $("#csvExport").href = `api/export.csv?year=${year}`;
-    const worked = state.entries.reduce((sum, entry) => sum + entry.worked_minutes, 0);
     const todayKey = isoDate(new Date());
+    const worked = state.entries.filter(entry => entry.work_date <= todayKey).reduce((sum, entry) => sum + entry.worked_minutes, 0);
     const account = state.entries.filter(entry => entry.work_date <= todayKey && countsForAccount(entry)).reduce((sum, entry) => sum + entry.account_minutes, 0);
     const yearStart = new Date(year, 0, 1);
     const yearEnd = new Date(year, 11, 31);
@@ -759,12 +841,13 @@
     $("#reportWorked").textContent = formatDuration(worked);
     $("#reportTarget").textContent = `von ${formatDuration(target)} Stunden`;
     $("#reportVacation").textContent = `${vacationUsed} / ${vacationTotal}`;
+    $("#reportVacation").nextElementSibling.textContent = "eingetragen / Anspruch";
     $("#reportHome").textContent = state.entries.filter(entry => entry.type === "H").length;
     $("#reportGross").textContent = formatMoney(state.entries.filter(entry => entry.work_date <= todayKey).reduce((sum, entry) => sum + Number(entry.estimated_gross_eur || 0), 0));
 
     const weekdayData = Array.from({ length: 7 }, () => []);
     const byDate = new Map();
-    state.entries.forEach(entry => {
+    state.entries.filter(entry => entry.work_date <= todayKey).forEach(entry => {
       const current = byDate.get(entry.work_date) || { worked: 0, account: 0 };
       current.worked += Number(entry.worked_minutes || 0);
       current.account += Number(entry.account_minutes || 0);
@@ -782,11 +865,17 @@
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const streakEnd = new Date(Math.min(yearEnd.getTime(), today.getTime()));
     let currentStreak = 0, bestStreak = 0, goalsReached = 0, scheduledDays = 0;
+    const finishedWork = state.entries.filter(entry => entry.work_date <= todayKey && countsForAccount(entry) && (["B", "H"].includes(entry.type) && entry.finalized || entry.type === "X"));
     for (const cursor = new Date(streakStart); cursor <= streakEnd; cursor.setDate(cursor.getDate() + 1)) {
       const dayTarget = targetPerDay(cursor);
       if (!dayTarget) continue;
-      scheduledDays += 1;
-      const reached = (byDate.get(isoDate(cursor))?.account || 0) >= dayTarget;
+      const key = isoDate(cursor);
+      const dayEntries = state.entries.filter(entry => entry.work_date === key);
+      if (dayEntries.some(entry => ["U", "K", "S", "FT"].includes(entry.type))) continue;
+      if (key === todayKey && !finishedWork.some(entry => entry.work_date === key)) continue;
+      const completed = finishedWork.filter(entry => entry.work_date === key);
+      if (completed.length) scheduledDays += 1;
+      const reached = completed.reduce((sum, entry) => sum + entry.worked_minutes, 0) >= dayTarget;
       if (reached) {
         goalsReached += 1;
         currentStreak += 1;
@@ -796,28 +885,101 @@
       }
     }
     $("#currentStreak").textContent = currentStreak;
+    $("#currentStreak").parentElement.title = `Aktuelle Serie: ${currentStreak} abgeschlossene Arbeitstage mit erfülltem Tagesziel`;
     $("#goalsReached").textContent = goalsReached;
     $("#goalRate").textContent = `${Math.round(goalsReached / Math.max(1, scheduledDays) * 100)} %`;
+    $("#goalRate").nextElementSibling.textContent = "abgeschlossener Arbeitstage";
     $("#bestStreak").textContent = bestStreak;
+    const pauses = finishedWork.filter(entry => ["B", "H"].includes(entry.type) && entry.required_break_minutes > 0 && entry.qualified_break_minutes >= entry.required_break_minutes).length;
+    const notes = finishedWork.filter(entry => (entry.note || "").trim()).length;
+    const badges = [
+      ["Erster Eintrag", "Ein abgeschlossener Arbeitstag", finishedWork.length, 1, "i-edit"],
+      ["Im Rhythmus", "Fünf Tagesziele in Folge", bestStreak, 5, "i-flame"],
+      ["Gut geschafft", "Zehn Tagesziele erfüllt", goalsReached, 10, "i-shield"],
+      ["Pausen im Blick", "Fünf Tage mit ausreichender Pause", pauses, 5, "i-sun"],
+      ["Festgehalten", "Fünf Tage mit einer Notiz", notes, 5, "i-edit"],
+    ];
+    $("#reportBadges").innerHTML = badges.map(([name, detail, value, goal, icon]) => `<article class="report-badge ${value >= goal ? "earned" : ""}"><svg aria-hidden="true"><use href="#${icon}"></use></svg><div><b>${name}</b><small>${detail}</small><span>${Math.min(value, goal)} / ${goal}${value >= goal ? " · Erreicht" : ""}</span><progress max="${goal}" value="${Math.min(value, goal)}" aria-label="${name}"></progress></div></article>`).join("");
+    renderPeriodList();
+    if ($("#periodDialog").open && state.selectedPeriod) renderPeriodDetails(state.selectedPeriod);
+  }
 
-    const currentYear = new Date().getFullYear();
-    const currentMonth = new Date().getMonth();
-    $("#monthList").innerHTML = MONTHS.map((name, month) => {
-      const entries = state.entries.filter(entry => parseISO(entry.work_date).getMonth() === month);
-      const actual = entries.reduce((sum, entry) => sum + entry.worked_minutes, 0);
-      const account = entries.filter(entry => entry.work_date <= todayKey && countsForAccount(entry)).reduce((sum, entry) => sum + entry.account_minutes, 0);
-      const first = new Date(year, month, 1), last = new Date(year, month + 1, 0);
-      const monthTarget = targetBetween(first, last, year === currentYear);
-      const saldo = account - monthTarget;
-      const ratio = Math.min(100, Math.round(actual / Math.max(1, monthTarget) * 100));
-      const future = year > currentYear || (year === currentYear && month > currentMonth);
-      return `<div class="month-row ${future ? "future" : ""}"><span class="month-name">${name}</span><div class="month-track"><div class="month-fill" style="width:${future ? 0 : ratio}%"></div></div><span class="numeric">${future ? "–" : formatDuration(actual)}</span><span class="numeric">${future ? "–" : formatDuration(monthTarget)}</span><span class="numeric saldo ${saldo < 0 ? "negative" : ""}">${future ? "–" : formatSigned(saldo)}</span></div>`;
+  function calendarWeek(day) {
+    const date = new Date(Date.UTC(day.getFullYear(), day.getMonth(), day.getDate()));
+    date.setUTCDate(date.getUTCDate() + 4 - (date.getUTCDay() || 7));
+    const year = date.getUTCFullYear();
+    const week = Math.ceil((((date - new Date(Date.UTC(year, 0, 1))) / 86400000) + 1) / 7);
+    return { year, week };
+  }
+
+  function periodSummary(period) {
+    const todayKey = isoDate(new Date());
+    const firstKey = isoDate(period.first), lastKey = isoDate(period.last);
+    const entries = state.entries.filter(entry => entry.work_date >= firstKey && entry.work_date <= lastKey && entry.work_date <= todayKey);
+    const future = firstKey > todayKey;
+    const worked = entries.reduce((sum, entry) => sum + Number(entry.worked_minutes || 0), 0);
+    const account = entries.filter(countsForAccount).reduce((sum, entry) => sum + Number(entry.account_minutes || 0), 0);
+    const target = targetBetween(period.first, period.last, !future);
+    return { entries, future, worked, account, target, saldo: account - target };
+  }
+
+  function renderPeriodList() {
+    const year = state.loadedYear;
+    const yearStart = new Date(year, 0, 1), yearEnd = new Date(year, 11, 31);
+    const todayKey = isoDate(new Date());
+    const dates = day => new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "2-digit" }).format(day);
+    state.reportPeriods = state.reportMode === "month" ? MONTHS.map((label, month) => ({ label, first: new Date(year, month, 1), last: new Date(year, month + 1, 0) })) : [];
+    if (state.reportMode === "week") {
+      for (let monday = mondayOf(yearStart); monday <= yearEnd; monday.setDate(monday.getDate() + 7)) {
+        const sunday = new Date(monday); sunday.setDate(sunday.getDate() + 6);
+        const first = new Date(Math.max(monday.getTime(), yearStart.getTime()));
+        const last = new Date(Math.min(sunday.getTime(), yearEnd.getTime()));
+        if (year <= new Date().getFullYear() && isoDate(first) > todayKey) continue;
+        const week = calendarWeek(monday);
+        state.reportPeriods.push({ label: `KW ${week.week}`, first, last, subtitle: `${dates(first)} – ${dates(last)}${week.year !== year ? ` · ${week.year}` : ""}` });
+      }
+      state.reportPeriods.reverse();
+    }
+    $$("[data-report-mode]").forEach(button => { const active = button.dataset.reportMode === state.reportMode; button.classList.toggle("active", active); button.setAttribute("aria-pressed", String(active)); });
+    $("#reportPeriodLabel").textContent = state.reportMode === "month" ? "Monate" : "Kalenderwochen";
+    $("#monthList").innerHTML = state.reportPeriods.map((period, index) => {
+      const values = periodSummary(period);
+      const ratio = Math.min(100, values.account / Math.max(1, values.target) * 100);
+      return `<button type="button" class="period-row ${values.future ? "future" : ""}" data-period-index="${index}" aria-label="${escapeHTML(period.label)}: Details öffnen"><span class="period-name"><b>${period.label}</b><small>${period.subtitle || `${year}${values.future ? " · Geplant" : ""}`}</small></span><span class="period-progress" aria-hidden="true"><i style="width:${values.future ? 0 : ratio}%"></i></span><span class="period-number"><small>Gearbeitet</small><b>${values.future ? "–" : formatDuration(values.worked)}</b></span><span class="period-number"><small>${values.future ? "Soll geplant" : "Soll bis heute"}</small><b>${formatDuration(values.target)}</b></span><span class="period-number ${values.saldo < 0 ? "negative" : ""}"><small>Saldo</small><b>${values.future ? "–" : formatSigned(values.saldo)}</b></span><svg aria-hidden="true"><use href="#i-right"></use></svg></button>`;
     }).join("");
+    $$("[data-period-index]").forEach(button => button.addEventListener("click", () => {
+      state.selectedPeriod = state.reportPeriods[Number(button.dataset.periodIndex)];
+      renderPeriodDetails(state.selectedPeriod);
+      $("#periodDialog").showModal();
+    }));
+  }
+
+  function renderPeriodDetails(period) {
+    const values = periodSummary(period);
+    $("#periodTitle").textContent = `${period.label} · ${state.loadedYear}`;
+    const format = day => new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "long" }).format(day);
+    $("#periodRange").textContent = `${format(period.first)} – ${format(period.last)} · ${values.future ? "Geplanter Zeitraum" : "Stand heute"}`;
+    $("#periodMetrics").innerHTML = [["Gearbeitet", values.future ? "–" : formatDuration(values.worked)], ["Angerechnet", values.future ? "–" : formatDuration(values.account)], [values.future ? "Soll geplant" : "Soll bis heute", formatDuration(values.target)], ["Saldo", values.future ? "–" : formatSigned(values.saldo)]].map(([label, value]) => `<div><small>${label}</small><b>${value}</b></div>`).join("");
+    const days = [];
+    for (const cursor = new Date(period.first); cursor <= period.last; cursor.setDate(cursor.getDate() + 1)) {
+      const key = isoDate(cursor);
+      const entries = state.entries.filter(entry => entry.work_date === key);
+      const target = countsForAccount({ work_date: key }) ? targetPerDay(cursor) : 0;
+      if (!target && !entries.length) continue;
+      const future = key > isoDate(new Date());
+      const worked = entries.reduce((sum, entry) => sum + entry.worked_minutes, 0);
+      const credited = entries.filter(countsForAccount).reduce((sum, entry) => sum + entry.account_minutes, 0);
+      const dateLabel = new Intl.DateTimeFormat("de-DE", { weekday: "short", day: "2-digit", month: "2-digit" }).format(cursor);
+      days.push(`<button class="period-day" type="button" data-period-day="${key}"><span class="period-day-name"><b>${dateLabel}</b><small>${escapeHTML(entries.map(entry => entry.type_label).join(" · ") || (future ? "Geplant" : "Kein Eintrag"))}</small></span><span><small>Gearbeitet</small><b>${future ? "–" : formatDuration(worked)}</b></span><span><small>Soll</small><b>${formatDuration(target)}</b></span><span><small>Saldo</small><b>${future ? "–" : formatSigned(credited - target)}</b></span></button>`);
+    }
+    $("#periodDays").innerHTML = days.join("") || '<p class="settings-section-copy">Keine Arbeitstage in diesem Zeitraum.</p>';
+    $$("[data-period-day]").forEach(button => button.addEventListener("click", () => { $("#periodDialog").close(); void openCalendarDay(button.dataset.periodDay); }));
   }
 
   function renderSettings() {
     const s = state.settings;
     $("#settingName").value = s.display_name || "";
+    $("#settingAfterWorkAnimation").checked = Boolean(s.after_work_animation_enabled);
     const targets = dailyTargets();
     $("#settingHours").value = (targets.reduce((sum, value) => sum + value, 0) / 60).toFixed(2).replace(/\.00$/, "");
     targets.forEach((value, index) => { $(`#settingDay${index}`).value = formatHoursMinutes(value); });
@@ -885,9 +1047,9 @@
     const periods = state.vacationPeriods.filter(period => (period.dates || []).some(day => day.startsWith(String(year))));
     $("#settingsVacationList").innerHTML = periods.length ? '<h3>Deine Urlaubszeiträume</h3>' + periods.map(period => {
       const format = day => new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "short", year: "numeric" }).format(parseISO(day));
-      return `<article class="vacation-period"><div><b>${escapeHTML(format(period.start_date))}${period.start_date !== period.end_date ? ` – ${escapeHTML(format(period.end_date))}` : ""}</b><span>${period.workdays} Urlaubstage${period.note ? ` · ${escapeHTML(period.note)}` : ""}</span></div><div class="vacation-period-actions"><button type="button" class="text-action" data-vacation-open="${period.start_date}">Ansehen</button><button type="button" class="text-action remove-vacation" data-vacation-from="${period.start_date}" data-vacation-to="${period.end_date}">Entfernen</button></div></article>`;
+      return `<article class="vacation-period"><div><b>${escapeHTML(format(period.start_date))}${period.start_date !== period.end_date ? ` – ${escapeHTML(format(period.end_date))}` : ""}</b><span>${period.workdays} Urlaubstage${period.note ? ` · ${escapeHTML(period.note)}` : ""}</span></div><div class="vacation-period-actions"><button type="button" class="text-action" data-vacation-edit="${period.start_date}">Bearbeiten</button><button type="button" class="text-action remove-vacation" data-vacation-from="${period.start_date}" data-vacation-to="${period.end_date}">Entfernen</button></div></article>`;
     }).join("") : '<p class="settings-section-copy">Noch kein Urlaub für dieses Jahr eingetragen. Plane gleich einen Zeitraum.</p>';
-    $$("[data-vacation-open]").forEach(button => button.addEventListener("click", () => { setView("calendar"); openCalendarDay(button.dataset.vacationOpen); }));
+    $$("[data-vacation-edit]").forEach(button => button.addEventListener("click", () => openVacationDialog(button.dataset.vacationEdit, "settings", state.vacationPeriods.find(period => period.start_date === button.dataset.vacationEdit))));
     $$("[data-vacation-from]").forEach(button => button.addEventListener("click", async () => {
       if (!confirm("Diesen Urlaubszeitraum entfernen? Andere Tagestypen und Feiertage bleiben erhalten.")) return;
       try {
@@ -963,6 +1125,7 @@
     const titles = { dashboard: "Dein Arbeitstag", calendar: "Kalender", reports: "Jahresübersicht", settings: "Einstellungen" };
     if (name !== "dashboard") $("#pageTitle").textContent = titles[name]; else renderHeader();
     history.replaceState(null, "", `#${name}`);
+    if (name === "dashboard") celebrateAfterWork();
     if (scroll) window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -1031,11 +1194,14 @@
     } catch (error) { toast(error.message, true); }
   }
 
-  function openVacationDialog(day = isoDate(new Date()), returnView = "calendar") {
+  function openVacationDialog(day = isoDate(new Date()), returnView = "calendar", editing = null) {
     state.vacationReturnView = returnView;
-    $("#vacationStart").value = day;
-    $("#vacationEnd").value = day;
-    $("#vacationNote").value = "";
+    state.vacationEditing = editing;
+    $("#vacationTitle").textContent = editing ? "Urlaubszeitraum bearbeiten" : "Urlaub als Zeitraum";
+    $("#vacationSubmit").textContent = editing ? "Änderungen speichern" : "Urlaub eintragen";
+    $("#vacationStart").value = editing?.start_date || day;
+    $("#vacationEnd").value = editing?.end_date || day;
+    $("#vacationNote").value = editing?.note || "";
     updateVacationRangePreview();
     $("#vacationDialog").showModal();
   }
@@ -1099,10 +1265,12 @@
   async function saveVacationRange(event) {
     event.preventDefault();
     const payload = { start_date: $("#vacationStart").value, end_date: $("#vacationEnd").value, note: $("#vacationNote").value };
+    const editing = state.vacationEditing;
+    if (editing) { payload.original_dates = editing.dates; payload.original_note = editing.note; }
     try {
-      const result = await api("api/vacation/range", { method: "POST", body: JSON.stringify(payload) });
+      const result = await api(editing ? "api/vacation/update" : "api/vacation/range", { method: "POST", body: JSON.stringify(payload) });
       $("#vacationDialog").close();
-      toast(result.added ? `${result.added} ${result.added === 1 ? "Urlaubstag" : "Urlaubstage"} eingetragen${result.free_days ? ` · ${result.free_days} ${result.free_days === 1 ? "freier Tag" : "freie Tage"} ausgelassen` : ""}` : "Diese Urlaubstage waren bereits eingetragen");
+      toast(editing ? `Urlaubszeitraum geändert · ${result.workdays} Urlaubstage` : result.added ? `${result.added} ${result.added === 1 ? "Urlaubstag" : "Urlaubstage"} eingetragen${result.free_days ? ` · ${result.free_days} ${result.free_days === 1 ? "freier Tag" : "freie Tage"} ausgelassen` : ""}` : "Diese Urlaubstage waren bereits eingetragen");
       state.calendarDate = new Date(parseISO(payload.start_date).getFullYear(), parseISO(payload.start_date).getMonth(), 1);
       const returnView = state.vacationReturnView || "calendar";
       await loadYear(parseISO(payload.start_date).getFullYear(), true, returnView === "settings");
@@ -1174,6 +1342,7 @@
       previous_balance_minutes: Number($("#settingBalance").value),
       auto_break_deduction: $("#settingAutoBreak").checked,
       theme: $("input[name='theme']:checked").value,
+      after_work_animation_enabled: $("#settingAfterWorkAnimation").checked,
       live_activity_enabled: $("#settingLiveActivity").checked,
       live_activity_service: $("#settingLiveService").value.trim(),
       milestone_notifications_enabled: $("#settingMilestones").checked,
@@ -1192,6 +1361,7 @@
   }
 
   const settingFieldKeys = {
+    settingAfterWorkAnimation: ["after_work_animation_enabled"],
     settingName: ["display_name"], settingAge: ["age_group"], settingStartDate: ["tracking_start_date"],
     settingVacation: ["vacation_allowance_by_year"], settingVacationDefault: ["vacation_allowance"],
     settingCarry: ["vacation_carryover"], settingMonthlyGross: ["monthly_gross_eur"], settingBalance: ["previous_balance_minutes"],
@@ -1344,8 +1514,19 @@
     $("#dayPlanForm").addEventListener("submit", saveDayPlan);
     $("#dayPlanExtra").addEventListener("input", updateDayPlanPreview);
     ["#closeDayPlan", "#cancelDayPlan"].forEach(selector => $(selector).addEventListener("click", () => $("#dayPlanDialog").close()));
-    $("#dayNoteForm").addEventListener("submit", saveDayNote);
-    $("#dayNoteText").addEventListener("input", () => { $("#dayNoteStatus").textContent = ""; });
+    $("#finishedNote").addEventListener("click", openDayNote);
+    $("#dayNoteForm").addEventListener("submit", event => { event.preventDefault(); void saveDayNote(); });
+    $("#dayNoteText").addEventListener("input", () => {
+      state.noteRevision += 1;
+      clearTimeout(state.noteSaveTimer);
+      $("#dayNoteStatus").textContent = "Änderungen werden gespeichert …";
+      state.noteSaveTimer = setTimeout(() => { void saveDayNote(); }, 650);
+    });
+    $("#dayNoteText").addEventListener("blur", () => { void saveDayNote(); });
+    ["#closeDayNote", "#doneDayNote"].forEach(selector => $(selector).addEventListener("click", () => { void closeDayNote(); }));
+    $("#dayNoteDialog").addEventListener("cancel", event => { event.preventDefault(); void closeDayNote(); });
+    $("#closePeriod").addEventListener("click", () => $("#periodDialog").close());
+    $$("[data-report-mode]").forEach(button => button.addEventListener("click", () => { state.reportMode = button.dataset.reportMode; renderPeriodList(); }));
     ["#dayNoteText", "#entryNote", "#vacationNote"].forEach(selector => $(selector).addEventListener("keydown", continueBulletList));
     $("#reopenTimer").addEventListener("click", reopenTimer);
     $("#saveXExtra").addEventListener("click", saveXExtra);
@@ -1359,6 +1540,8 @@
     $("#editCalendarDay").addEventListener("click", () => {
       if (entriesOn(state.calendarDay)[0]?.automatic_holiday) return saveHolidayException(state.calendarDay, true);
       $("#calendarDayDialog").close();
+      const vacation = state.vacationPeriods.find(period => period.dates.includes(state.calendarDay));
+      if (vacation) return openVacationDialog(state.calendarDay, "calendar", vacation);
       state.entryReturnView = "calendar";
       openEntryDialog(state.calendarDay);
     });
@@ -1453,8 +1636,13 @@
     });
     window.addEventListener("online", () => { if (state.pendingSettings.size) void saveSettings(); });
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden" && state.pendingSettings.size) void saveSettings(); });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden" && state.noteRevision !== state.noteSavedRevision) void saveDayNote();
+      if (document.visibilityState === "visible") { void refreshState(); celebrateAfterWork(); }
+    });
+    window.addEventListener("online", () => { if (state.noteRevision !== state.noteSavedRevision) void saveDayNote(); });
     window.addEventListener("beforeunload", event => {
-      if (state.pendingSettings.size || state.settingsSavePromise) { event.preventDefault(); event.returnValue = ""; }
+      if (state.pendingSettings.size || state.settingsSavePromise || state.noteRevision !== state.noteSavedRevision || state.noteSavePromise) { event.preventDefault(); event.returnValue = ""; }
     });
   }
 
@@ -1476,7 +1664,15 @@
     } catch { /* Browser unterstützt die optionale Schnittstelle noch nicht vollständig. */ }
   }
 
+  async function refreshState() {
+    if (state.refreshBusy || state.timerBusy || !state.settings || document.visibilityState === "hidden") return;
+    state.refreshBusy = true;
+    try { await loadYear(state.loadedYear, true, true); }
+    finally { state.refreshBusy = false; }
+  }
+
   bindEvents();
+  setInterval(() => { void refreshState(); }, 30000);
   themeMedia.addEventListener?.("change", () => {
     if ((document.documentElement.dataset.themePreference || "system") === "system") applyTheme("system", false);
   });

@@ -25,3 +25,5 @@ python zeitwerk/app/server.py
 Regressionstests: `python -m unittest discover -s tests -v`.
 
 Frontend-Berechnung der Wochenbalken: `node tests/test_week_progress.js`.
+
+Live-Konto, ISO-Kalenderwochen und angerechnete Periodensummen: `node tests/test_day_insights.js`.

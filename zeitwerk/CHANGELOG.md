@@ -1,5 +1,15 @@
 # Änderungsverlauf
 
+## 5.1.0
+
+- Live-Zeitkonto; im Konto-Fenster getrennte Anzeige des Guthabens vor heute und der heutigen Abweichung vom Soll
+- Urlaubszeiträume lassen sich als Ganzes verschieben, verlängern, kürzen und umbenennen; Änderungen sind atomar, Konflikte überschreiben keine anderen Tage
+- Wochen- und Monatsauswertung mit eindeutig beschrifteten Werten und anklickbaren Tagesdetails; angerechnete freie Tage werden erklärt
+- Neue Meilensteine für vollständige Einträge, Tagesziele, ausreichende Pausen und Notizen; freie Tage unterbrechen keine Zielserie
+- Optionale kleine Feierabendanimation, einmal pro Tag und Gerät; berücksichtigt reduzierte Bewegung
+- Tagesnotizen im eigenen Fenster mit automatischem Speichern, Fehleranzeige und Wiederholungsversuch
+- Formatierung der Feierabend-Zeitzeile und des Tagesprotokolls bereinigt
+
 ## 5.0.1
 
 - Wochenbalken füllen sich bis zum Tagessoll blau und bei Überstunden erneut mit einer violetten Schicht von unten

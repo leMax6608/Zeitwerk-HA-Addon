@@ -100,6 +100,76 @@ class ZeitwerkWorkflowTests(unittest.TestCase):
             self.assertTrue(saved["start_notification_enabled"])
             self.assertEqual(saved["display_name"], "")
 
+    def test_account_before_today_excludes_today_target_and_credit(self):
+        today = date.today().isoformat()
+        with self.settings_override(tracking_start_date=today, previous_balance_minutes=120, daily_work_minutes=[480] * 7, holidays_enabled=False):
+            account = self.request("api/state")["current_account"]
+            self.assertEqual(account["balance_before_today_minutes"], 120)
+            self.assertEqual(account["today_target_minutes"], 480)
+            self.assertEqual(account["balance_minutes"], 120 + account["today_account_minutes"] - 480)
+
+    def test_vacation_period_edit_is_atomic_and_preserves_other_days(self):
+        first, last = "2044-02-01", "2044-02-08"
+        with self.settings_override(daily_work_minutes=[480] * 7, holidays_enabled=False):
+            self.request("api/entries", {"work_date": "2044-02-03", "type": "FT", "note": "Free"})
+            self.request("api/vacation/range", {"start_date": first, "end_date": "2044-02-02", "note": "Original"})
+            self.request("api/vacation/range", {"start_date": "2044-02-04", "end_date": "2044-02-05", "note": "Other"})
+            try:
+                original = next(period for period in self.module.vacation_periods(self.module.get_settings()) if period["start_date"] == first)
+                # Differently named periods remain separate: edit precisely one selection.
+                payload = {"original_dates": original["dates"], "original_note": original["note"], "start_date": "2044-02-01", "end_date": "2044-02-02", "note": "Updated"}
+                result = self.request("api/vacation/update", payload)
+                self.assertEqual(result["workdays"], 2)
+                saved = self.module.list_entries(first, last, self.module.get_settings())
+                self.assertEqual(next(entry for entry in saved if entry["work_date"] == "2044-02-03")["type"], "FT")
+                self.assertEqual(next(entry for entry in saved if entry["work_date"] == "2044-02-04")["note"], "Other")
+                # A stale edit cannot remove another revision of the same period.
+                with self.assertRaises(urllib.error.HTTPError) as error:
+                    self.request("api/vacation/update", payload)
+                error.exception.close()
+                changed = next(period for period in self.module.vacation_periods(self.module.get_settings()) if period["start_date"] == first)
+                self.request("api/entries", {"work_date": "2044-02-08", "type": "B", "start_time": "08:00", "end_time": "16:00", "break_duration": "00:00"})
+                conflict = {"original_dates": changed["dates"], "original_note": changed["note"], "start_date": "2044-02-07", "end_date": last, "note": "Moved"}
+                before = self.module.list_entries(first, last, self.module.get_settings())
+                with self.assertRaises(urllib.error.HTTPError) as error:
+                    self.request("api/vacation/update", conflict)
+                error.exception.close()
+                self.assertEqual(self.module.list_entries(first, last, self.module.get_settings()), before)
+                # Insertion failure after deleting old rows must roll back the deletion.
+                with self.module.DB_LOCK, self.module.db() as con:
+                    con.execute("CREATE TRIGGER vacation_test_abort BEFORE INSERT ON entries WHEN NEW.work_date='2044-02-07' BEGIN SELECT RAISE(ABORT,'test insertion failure'); END")
+                with self.assertRaises(urllib.error.HTTPError) as error:
+                    self.request("api/vacation/update", {**conflict, "end_date": "2044-02-07"})
+                error.exception.close()
+                self.assertEqual(self.module.list_entries(first, last, self.module.get_settings()), before)
+                with self.module.DB_LOCK, self.module.db() as con:
+                    con.execute("DROP TRIGGER vacation_test_abort")
+                self.request("api/vacation/update", {**conflict, "end_date": "2044-02-07"})
+                saved = self.module.list_entries(first, last, self.module.get_settings())
+                self.assertFalse(any(entry["work_date"] in changed["dates"] for entry in saved))
+                self.assertEqual(next(entry for entry in saved if entry["work_date"] == "2044-02-07")["note"], "Moved")
+            finally:
+                with self.module.DB_LOCK, self.module.db() as con:
+                    con.execute("DROP TRIGGER IF EXISTS vacation_test_abort")
+                    con.execute("DELETE FROM entries WHERE work_date BETWEEN ? AND ?", (first, last))
+
+    def test_vacation_period_spans_manual_free_day(self):
+        first, last = "2047-06-03", "2047-06-07"
+        with self.settings_override(daily_work_minutes=[480] * 7, holidays_enabled=False):
+            try:
+                self.request("api/entries", {"work_date": "2047-06-05", "type": "FT"})
+                self.request("api/vacation/range", {"start_date": first, "end_date": last, "note": "Break"})
+                period = next(period for period in self.module.vacation_periods(self.module.get_settings()) if period["start_date"] == first)
+                self.assertEqual(period["end_date"], last)
+                self.assertEqual(period["workdays"], 4)
+                self.request("api/vacation/update", {"original_dates": period["dates"], "original_note": period["note"], "start_date": first, "end_date": "2047-06-04", "note": "Shortened"})
+                saved = self.module.list_entries(first, last, self.module.get_settings())
+                self.assertEqual(sorted(entry["work_date"] for entry in saved if entry["type"] == "U"), [first, "2047-06-04"])
+                self.assertEqual(next(entry for entry in saved if entry["work_date"] == "2047-06-05")["type"], "FT")
+            finally:
+                with self.module.DB_LOCK, self.module.db() as con:
+                    con.execute("DELETE FROM entries WHERE work_date BETWEEN ? AND ?", (first, last))
+
     def test_overtime_plan_is_durable_and_does_not_change_contractual_target(self):
         day = "2041-03-04"
         with self.settings_override(overtime_plan_by_date={}, daily_work_minutes=[480] * 7):

@@ -48,6 +48,7 @@ DEFAULT_SETTINGS = {
     "tracking_start_date": date.today().isoformat(),
     "auto_break_deduction": True,
     "theme": "system",
+    "after_work_animation_enabled": True,
     "live_activity_enabled": False,
     "live_activity_service": "",
     "milestone_notifications_enabled": False,
@@ -652,7 +653,7 @@ def refresh_holidays(settings: dict, year: int, force: bool = False) -> bool:
         HOLIDAY_ATTEMPTS[key] = time.monotonic()
         query = urlencode({"countryIsoCode": "DE", "subdivisionCode": f"DE-{state}", "languageIsoCode": "DE", "validFrom": f"{year}-01-01", "validTo": f"{year}-12-31"})
         try:
-            request = Request("https://openholidaysapi.org/PublicHolidays?" + query, headers={"Accept": "application/json", "User-Agent": "Zeitwerk/DesignExperiment"})
+            request = Request("https://openholidaysapi.org/PublicHolidays?" + query, headers={"Accept": "application/json", "User-Agent": "Zeitwerk"})
             with urlopen(request, timeout=4) as response:
                 raw = json.load(response)
             if not isinstance(raw, list) or not raw:
@@ -894,6 +895,7 @@ def next_vacation(settings: dict) -> dict | None:
 def vacation_periods(settings: dict) -> list[dict]:
     with DB_LOCK, db() as con:
         rows = con.execute("SELECT work_date,note FROM entries WHERE type='U' ORDER BY work_date").fetchall()
+        free_days = {row[0] for row in con.execute("SELECT work_date FROM entries WHERE type='FT'")}
     periods = []
     for row in rows:
         day = date.fromisoformat(row["work_date"])
@@ -901,7 +903,7 @@ def vacation_periods(settings: dict) -> list[dict]:
             continue
         previous = periods[-1] if periods else None
         expected = date.fromisoformat(previous["end_date"]) + timedelta(days=1) if previous else day
-        while previous and expected < day and (daily_target(settings, expected.isoformat()) == 0 or expected.isoformat() in holiday_dates(settings, expected.year)):
+        while previous and expected < day and (daily_target(settings, expected.isoformat()) == 0 or expected.isoformat() in holiday_dates(settings, expected.year) or expected.isoformat() in free_days):
             expected += timedelta(days=1)
         if previous and expected == day and previous["note"] == row["note"]:
             previous["end_date"] = day.isoformat()
@@ -1100,7 +1102,7 @@ def summary_for(entries: list[dict], settings: dict, start_date: str, end_date: 
 
 
 class Handler(SimpleHTTPRequestHandler):
-    server_version = "Zeitwerk/5.0.1"
+    server_version = "Zeitwerk/5.1.0"
     extensions_map = {
         **SimpleHTTPRequestHandler.extensions_map,
         ".webmanifest": "application/manifest+json",
@@ -1169,9 +1171,18 @@ class Handler(SimpleHTTPRequestHandler):
                 refresh_holidays(settings, year)
             entries = list_entries(start_date, end_date, settings)
             current_year_start = f"{today.year}-01-01"
-            current_account = summary_for(list_entries(current_year_start, today.isoformat(), settings), settings, current_year_start, today.isoformat())
+            current_entries = list_entries(current_year_start, today.isoformat(), settings)
+            current_account = summary_for(current_entries, settings, current_year_start, today.isoformat())
             current_account["previous_balance_minutes"] = int(settings.get("previous_balance_minutes", 0) or 0)
             current_account["balance_minutes"] += current_account["previous_balance_minutes"]
+            today_in_scope = settings.get("tracking_start_date", current_year_start) <= today.isoformat()
+            today_account = sum(entry["account_minutes"] for entry in current_entries if entry["work_date"] == today.isoformat()) if today_in_scope else 0
+            today_target = daily_target(settings, today.isoformat()) if today_in_scope else 0
+            current_account.update({
+                "today_account_minutes": today_account,
+                "today_target_minutes": today_target,
+                "balance_before_today_minutes": current_account["balance_minutes"] - today_account + today_target,
+            })
             return self.json_response(
                 {
                     "settings": settings,
@@ -1279,6 +1290,8 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.timer_action(path.rsplit("/", 1)[-1])
             if path == "/api/vacation/range" and method == "POST":
                 return self.save_vacation_range(payload)
+            if path == "/api/vacation/update" and method == "POST":
+                return self.save_vacation_range(payload, replacing=True)
             if path == "/api/vacation/remove" and method == "POST":
                 return self.remove_vacation_range(payload)
             if path == "/api/entries/x-extra" and method == "POST":
@@ -1349,7 +1362,7 @@ class Handler(SimpleHTTPRequestHandler):
             raise ValueError("Bitte ein gültiges Bundesland wählen")
         if updates.get("holidays_enabled") and not updates.get("holiday_state", get_settings().get("holiday_state")):
             raise ValueError("Bitte zuerst dein Bundesland wählen")
-        for flag in ("pause_minimum_notification_enabled", "pause_reminder_enabled", "end_soon_notification_enabled", "overtime_notification_enabled", "start_notification_enabled", "holidays_enabled"):
+        for flag in ("pause_minimum_notification_enabled", "pause_reminder_enabled", "end_soon_notification_enabled", "overtime_notification_enabled", "start_notification_enabled", "holidays_enabled", "after_work_animation_enabled"):
             if flag in updates and not isinstance(updates[flag], bool):
                 raise ValueError("Ungültiger Schalterwert")
         # Day plans and exclusions are changed through their own validated routes.
@@ -1574,7 +1587,7 @@ class Handler(SimpleHTTPRequestHandler):
         live_activity = sync_live_activity(settings, "resume", serialized)
         self.json_response({"ok": True, "entry": serialized, "live_activity": live_activity})
 
-    def save_vacation_range(self, payload: dict) -> None:
+    def save_vacation_range(self, payload: dict, replacing: bool = False) -> None:
         try:
             first = date.fromisoformat(str(payload.get("start_date", "")))
             last = date.fromisoformat(str(payload.get("end_date", "")))
@@ -1594,6 +1607,15 @@ class Handler(SimpleHTTPRequestHandler):
             refresh_holidays(settings, year)
             automatic_days.update(holiday_dates(settings, year))
         with DB_LOCK, db() as con:
+            original_dates = set()
+            if replacing:
+                raw_dates = payload.get("original_dates")
+                if not isinstance(raw_dates, list) or not 1 <= len(raw_dates) <= 367:
+                    raise ValueError("Bitte einen vorhandenen Urlaubszeitraum auswählen")
+                original_dates = {date.fromisoformat(str(day)).isoformat() for day in raw_dates}
+                original_note = str(payload.get("original_note", ""))
+                if not any(set(period["dates"]) == original_dates and period["note"] == original_note for period in vacation_periods(settings)):
+                    raise ValueError("Dieser Urlaubszeitraum wurde inzwischen geändert. Bitte neu öffnen.")
             rows = con.execute(
                 "SELECT work_date,type FROM entries WHERE work_date BETWEEN ? AND ?",
                 (first.isoformat(), last.isoformat()),
@@ -1604,9 +1626,17 @@ class Handler(SimpleHTTPRequestHandler):
             conflicts = [day for day in work_dates if existing.get(day, set()) - {"U", "FT"}]
             if conflicts:
                 raise ValueError(f"Am {date.fromisoformat(conflicts[0]).strftime('%d.%m.%Y')} besteht bereits ein anderer Eintrag. Bitte diesen zuerst prüfen.")
+            if replacing and any("U" in existing.get(day, set()) and day not in original_dates and "FT" not in existing.get(day, set()) and day not in automatic_days for day in work_dates):
+                raise ValueError("Der neue Zeitraum überschneidet sich mit anderem Urlaub. Bitte einen freien Zeitraum wählen.")
             vacation_dates = [day for day in work_dates if "FT" not in existing.get(day, set()) and day not in automatic_days]
             if not vacation_dates:
                 raise ValueError("Im Zeitraum bleibt nach den eingetragenen freien Tagen kein Urlaubstag übrig")
+            if replacing:
+                # Validate everything before replacing; failures roll back the entire edit.
+                placeholders = ",".join("?" for _ in original_dates)
+                con.execute(f"DELETE FROM entries WHERE type='U' AND work_date IN ({placeholders})", sorted(original_dates))
+                for day in original_dates:
+                    existing.pop(day, None)
             added = 0
             for day in vacation_dates:
                 if "U" in existing.get(day, set()):
