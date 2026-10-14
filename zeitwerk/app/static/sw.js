@@ -1,7 +1,7 @@
 "use strict";
 
-const CACHE_NAME = "zeitwerk-shell-v5.2.0";
-const SHELL_FILES = ["./", "styles.css?v=5.2.0", "interface.css?v=5.2.0", "app.js?v=5.2.0", "app-icon.svg", "favicon.svg?v=5.2.0", "icon-180.png?v=5.2.0", "icon-192.png", "icon-512.png", "manifest.webmanifest?v=5.2.0"];
+const CACHE_NAME = "zeitwerk-shell-v5.3.0";
+const SHELL_FILES = ["./", "styles.css?v=5.3.0", "interface.css?v=5.3.0", "app.js?v=5.3.0", "app-icon.svg", "favicon.svg?v=5.3.0", "icon-180.png?v=5.3.0", "icon-192.png", "icon-512.png", "manifest.webmanifest?v=5.3.0"];
 
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(SHELL_FILES)).then(() => self.skipWaiting()));

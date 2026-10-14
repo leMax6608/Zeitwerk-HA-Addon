@@ -14,8 +14,9 @@ Zeitwerk läuft auf deinem Home-Assistant-Gerät. Deine Zeiten bleiben im persis
 
 - **Arbeit und Pause erfassen:** starten, pausieren und den Tag nach Bestätigung abschließen. Vergessene Zeiten lassen sich manuell korrigieren.
 - **Den Überblick behalten:** neue Tages- und Feierabendansicht, Kalender, individuelles Tagessoll und aufklappbares Zeitkonto.
+- **Änderungen richtig zuordnen:** Arbeitsmodell und Monatsbrutto mit „gültig ab“-Datum; frühere Werte bleiben für frühere Tage gültig.
 - **Den Tag planen:** zusätzliche Arbeitszeit über das Zahnrad planen und nach Feierabend freiwillig eine Tagesnotiz mit Stichpunkten ergänzen.
-- **Freie Tage planen:** Urlaubszeiträume in den Einstellungen verwalten; Feiertage je Bundesland automatisch berücksichtigen oder einzelne Ausnahmen wählen.
+- **Freie Tage planen:** Urlaubszeiträume verwalten und mit dem Brückentage-Planer längere Auszeiten finden; Feiertage je Bundesland berücksichtigen oder einzelne Ausnahmen wählen.
 - **Auf dem iPhone nutzen:** als Web-App im Heimnetz und optional mit Live Activity über die Home-Assistant-Companion-App.
 - **Mitteilungen nach Wunsch:** Motivation, Pausen, Tagesziel, geplanter Feierabend und Abschlussbilanz einzeln einstellen.
 - **Direkt einstellen:** Änderungen speichern automatisch; die Oberfläche bietet helles Design, Dunkelmodus und flüssige Tabwechsel.
@@ -28,7 +29,7 @@ Zeitwerk läuft auf deinem Home-Assistant-Gerät. Deine Zeiten bleiben im persis
 3. Installiere **Zeitwerk – Arbeitszeit**, starte die App und öffne ihre **Weboberfläche**.
 4. Stelle unter **Einstellungen** deine Arbeitstage, Tagesziele und deinen Urlaubsanspruch ein.
 
-Bei einer bestehenden Repository-Installation: Im App-Store **Nach Updates suchen** und Zeitwerk auf **5.2.0** aktualisieren. Vorher eine JSON-Sicherung herunterladen; nach dem Update die Weboberfläche neu laden.
+Bei einer bestehenden Repository-Installation: Im App-Store **Nach Updates suchen** und Zeitwerk auf **5.3.0** aktualisieren. Vorher eine JSON-Sicherung herunterladen; nach dem Update die Weboberfläche neu laden.
 
 > **Du nutzt bereits eine lokale Zeitwerk-Installation?** Die Repository-Version hat eine andere App-Kennung und übernimmt deine Daten **nicht automatisch**. Lade zuerst unter **Einstellungen → Daten & Sicherung** ein JSON-Backup herunter. Installiere die neue App zusätzlich, importiere das Backup und prüfe deine Zeiten, bevor du die alte Installation entfernst. Beide Apps können nicht gleichzeitig den Host-Port `18099` nutzen; stoppe dafür vorübergehend die alte App.
 

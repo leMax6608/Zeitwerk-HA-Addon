@@ -6,6 +6,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import math
 import os
 import re
 import shutil
@@ -57,6 +58,8 @@ DEFAULT_SETTINGS = {
     "end_summary_enabled": True,
     "hourly_gross_eur": 0,
     "monthly_gross_eur": 0,
+    "work_model_history": [],
+    "salary_history": [],
     "pause_minimum_notification_enabled": False,
     "pause_reminder_enabled": False,
     "end_soon_notification_enabled": False,
@@ -188,7 +191,7 @@ def end_summary_payload(settings: dict, item: dict) -> dict:
     if work_date[:4] == str(date.today().year):
         balance += int(settings.get("previous_balance_minutes", 0) or 0)
     comparison = f"Heute {signed_duration(day_delta)} zum Soll · Konto {signed_duration(balance)}"
-    if has_gross_setting(settings):
+    if has_gross_setting(settings, work_date):
         earned = estimated_gross(settings, work_date, item.get("worked_minutes", 0))
         comparison += f" · {format_currency_eur(earned)} brutto"
     return {
@@ -549,7 +552,31 @@ def get_settings() -> dict:
     return result
 
 
-def daily_targets(settings: dict) -> list[int]:
+def effective_values(settings: dict, key: str, day_value=None) -> dict:
+    """Resolve a dated snapshot without changing the legacy baseline."""
+    day = str(day_value or date.today())[:10]
+    eligible = [item for item in settings.get(key, []) if item["effective_from"] <= day]
+    return max(eligible, key=lambda item: item["effective_from"]) if eligible else settings
+
+
+def validate_history_item(item: dict, kind: str) -> dict:
+    if not isinstance(item, dict):
+        raise ValueError("Ungültige datierte Änderung")
+    day = date.fromisoformat(str(item.get("effective_from", ""))).isoformat()
+    if kind == "work_model_history":
+        values = item.get("daily_work_minutes")
+        if not isinstance(values, list) or len(values) != 7 or any(isinstance(v, bool) or not isinstance(v, int) or not 0 <= v <= 1440 for v in values) or not 0 < sum(values) <= 4800:
+            raise ValueError("Bitte gültige Tagesziele mit insgesamt höchstens 80 Wochenstunden angeben")
+        return {"effective_from": day, "daily_work_minutes": values}
+    amount = float(item.get("monthly_gross_eur", 0))
+    hourly = float(item.get("hourly_gross_eur", 0))
+    if not math.isfinite(amount) or not math.isfinite(hourly) or not 0 <= amount <= 1000000 or not 0 <= hourly <= 10000:
+        raise ValueError("Ungültiger Bruttoverdienst")
+    return {"effective_from": day, "monthly_gross_eur": amount, "hourly_gross_eur": hourly}
+
+
+def daily_targets(settings: dict, day_value=None) -> list[int]:
+    settings = effective_values(settings, "work_model_history", day_value)
     configured = settings.get("daily_work_minutes")
     if isinstance(configured, list) and len(configured) == 7:
         try:
@@ -570,30 +597,35 @@ def daily_target(settings: dict, day_value=None) -> int:
         except ValueError:
             chosen = date.today()
         weekday = chosen.weekday()
-    return daily_targets(settings)[weekday % 7]
+    return daily_targets(settings, None if isinstance(day_value, int) else day_value)[weekday % 7]
 
 
 def monthly_workdays(settings: dict, day_value: str) -> int:
     chosen = date.fromisoformat(str(day_value)[:10])
+    targets = daily_targets(settings, day_value)
     first = chosen.replace(day=1)
     next_month = date(first.year + (first.month == 12), first.month % 12 + 1, 1)
-    return sum(daily_target(settings, first + timedelta(days=offset)) > 0
+    # Use this day's model for the monthly estimate. A later model must not
+    # retrospectively change the divisor (and thus earnings) of earlier days.
+    return sum(targets[(first + timedelta(days=offset)).weekday()] > 0
                for offset in range((next_month - first).days))
 
 
-def has_gross_setting(settings: dict) -> bool:
+def has_gross_setting(settings: dict, day_value=None) -> bool:
+    settings = effective_values(settings, "salary_history", day_value)
     return float(settings.get("monthly_gross_eur", 0) or 0) > 0 or float(settings.get("hourly_gross_eur", 0) or 0) > 0
 
 
 def estimated_gross(settings: dict, day_value: str, worked_minutes: int | float) -> float:
-    monthly = max(0, float(settings.get("monthly_gross_eur", 0) or 0))
+    salary = effective_values(settings, "salary_history", day_value)
+    monthly = max(0, float(salary.get("monthly_gross_eur", 0) or 0))
     if monthly:
         target = daily_target(settings, day_value)
         if target <= 0:
             return 0.0
         daily_amount = monthly / max(1, monthly_workdays(settings, day_value))
         return round(daily_amount * min(1, max(0, float(worked_minutes or 0)) / target), 2)
-    hourly = max(0, float(settings.get("hourly_gross_eur", 0) or 0))
+    hourly = max(0, float(salary.get("hourly_gross_eur", 0) or 0))
     return round(max(0, float(worked_minutes or 0)) / 60 * hourly, 2)
 
 
@@ -607,6 +639,50 @@ def vacation_allowance_for(settings: dict, year: int) -> float:
             except (TypeError, ValueError):
                 pass
     return max(0, float(settings.get("vacation_allowance", DEFAULT_SETTINGS["vacation_allowance"]) or 0))
+
+
+def bridge_day_suggestions(settings: dict, year: int, budget: int, entries: list[dict], today=None) -> list[dict]:
+    """Find non-overlapping free-time windows. No booking or remote calls here."""
+    first = max(today or date.today(), date(year, 1, 1))
+    last = date(year, 12, 31)
+    occupied = {item["work_date"]: item["type"] for item in entries}
+    holidays = holiday_dates(settings, year)
+    days = []
+    cursor = first
+    while cursor <= last:
+        key = cursor.isoformat()
+        kind = occupied.get(key)
+        blocked = kind is not None and kind not in {"U", "FT"}
+        free = kind in {"U", "FT"} or key in holidays or daily_target(settings, key) == 0
+        days.append((key, blocked, free, kind == "U" and key not in holidays and daily_target(settings, key) > 0))
+        cursor += timedelta(days=1)
+    candidates = []
+    for start, (key, blocked, free, _) in enumerate(days):
+        # Don't start inside a free block; its earlier edge is always better.
+        if blocked or (free and start and days[start - 1][2] and not days[start - 1][1]):
+            continue
+        needed, booked = [], 0
+        for end in range(start, min(start + 60, len(days))):
+            end_key, blocked, free, existing_leave = days[end]
+            if blocked:
+                break
+            if not free:
+                needed.append(end_key)
+            booked += int(existing_leave)
+            if len(needed) > budget:
+                break
+            if needed and (end == len(days) - 1 or not days[end + 1][2] or days[end + 1][1]):
+                count = end - start + 1
+                candidates.append({"start_date": key, "end_date": end_key, "free_days": count, "vacation_days": len(needed), "already_booked": booked, "dates_to_book": list(needed), "holidays": [{"date": day, "name": holidays[day]} for day, *_ in days[start:end + 1] if day in holidays]})
+    candidates.sort(key=lambda item: (-item["free_days"], item["vacation_days"], item["start_date"]))
+    selected = []
+    for item in candidates:
+        if item["free_days"] <= item["vacation_days"] or any(item["start_date"] <= chosen["end_date"] and item["end_date"] >= chosen["start_date"] for chosen in selected):
+            continue
+        selected.append(item)
+        if len(selected) == 6:
+            break
+    return selected
 
 
 def planned_target(settings: dict, day_value=None) -> int:
@@ -828,7 +904,7 @@ def serialize_entry(row: sqlite3.Row | dict, settings: dict) -> dict:
             "worked_minutes": worked,
             "credited_minutes": credited,
             "account_minutes": account,
-            "estimated_gross_eur": estimated_gross(settings, item["work_date"], worked + credited if settings.get("monthly_gross_eur") else worked),
+            "estimated_gross_eur": estimated_gross(settings, item["work_date"], worked + credited if effective_values(settings, "salary_history", item["work_date"]).get("monthly_gross_eur") else worked),
             "elapsed_minutes": elapsed,
             "elapsed_seconds": elapsed_seconds,
             "recorded_break_seconds": recorded_break_seconds,
@@ -943,7 +1019,7 @@ def progress_notification_payload(settings: dict, item: dict, milestone: int) ->
         title, message = "Zeitwerk · Motivation", saying
     else:
         title, message = f"Zeitwerk · {milestone} %", saying
-        if has_gross_setting(settings):
+        if has_gross_setting(settings, item["work_date"]):
             earned = estimated_gross(settings, item["work_date"], item.get("worked_minutes", 0))
             message += f" Heute verdient: ca. {format_currency_eur(earned)} brutto."
     return {
@@ -1102,7 +1178,7 @@ def summary_for(entries: list[dict], settings: dict, start_date: str, end_date: 
 
 
 class Handler(SimpleHTTPRequestHandler):
-    server_version = "Zeitwerk/5.2.0"
+    server_version = "Zeitwerk/5.3.0"
     extensions_map = {
         **SimpleHTTPRequestHandler.extensions_map,
         ".webmanifest": "application/manifest+json",
@@ -1268,6 +1344,12 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             if path == "/api/settings" and method == "POST":
                 return self.save_settings(payload)
+            if path == "/api/settings/dated" and method == "POST":
+                return self.save_dated_settings(payload)
+            if path == "/api/timer/start-time" and method == "POST":
+                return self.correct_start_time(payload)
+            if path == "/api/vacation/suggestions" and method == "POST":
+                return self.vacation_suggestions(payload)
             if path == "/api/live-activity/test" and method == "POST":
                 return self.test_live_activity()
             if path == "/api/day-plan" and method == "POST":
@@ -1368,8 +1450,13 @@ class Handler(SimpleHTTPRequestHandler):
         # Day plans and exclusions are changed through their own validated routes.
         updates.pop("overtime_plan_by_date", None)
         updates.pop("holiday_exclusions", None)
-        previous_settings = get_settings()
+        updates.pop("work_model_history", None)
+        updates.pop("salary_history", None)
         with DB_LOCK, db() as con:
+            previous_settings = get_settings()
+            for history_key, fields in (("work_model_history", ("daily_work_minutes", "weekly_hours", "workdays")), ("salary_history", ("monthly_gross_eur", "hourly_gross_eur"))):
+                if previous_settings.get(history_key) and any(key in updates and updates[key] != previous_settings.get(key) for key in fields):
+                    raise ValueError("Bitte Arbeitsmodell und Gehalt als datierte Änderung speichern")
             for key, value in updates.items():
                 con.execute(
                     "INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -1379,6 +1466,66 @@ class Handler(SimpleHTTPRequestHandler):
         if previous_settings.get("live_activity_enabled") and updates.get("live_activity_enabled") is False:
             clear_live_activity(previous_settings.get("live_activity_service", ""))
         self.json_response({"ok": True, "settings": get_settings()})
+
+    def save_dated_settings(self, payload: dict) -> None:
+        key = {"model": "work_model_history", "salary": "salary_history"}.get(payload.get("kind"))
+        if not key:
+            raise ValueError("Unbekannte Änderung")
+        item = validate_history_item(payload, key)
+        if item["effective_from"] == "0001-01-01":
+            raise ValueError("Bitte ein gültiges Änderungsdatum wählen")
+        with DB_LOCK, db() as con:
+            settings = get_settings()
+            history = list(settings.get(key) or [])
+            if not history:
+                baseline = {"effective_from": "0001-01-01"}
+                baseline.update({"daily_work_minutes": daily_targets(settings)} if key == "work_model_history" else {field: settings.get(field, 0) for field in ("monthly_gross_eur", "hourly_gross_eur")})
+                history.append(baseline)
+            history = [record for record in history if record["effective_from"] != item["effective_from"]] + [item]
+            if len(history) > 500:
+                raise ValueError("Zu viele datierte Änderungen")
+            history.sort(key=lambda record: record["effective_from"])
+            con.execute("UPDATE settings SET value=? WHERE key=?", (json.dumps(history), key))
+        create_safety_backup()
+        settings = get_settings()
+        current = active_entry(settings)
+        if current:
+            sync_live_activity(settings, "pause" if current["is_paused"] else "resume", current)
+        self.json_response({"ok": True, "settings": settings})
+
+    def correct_start_time(self, payload: dict) -> None:
+        clock = str(payload.get("start_time", ""))
+        seconds = parse_clock_seconds(clock)
+        now = datetime.now()
+        if seconds is None or seconds > now.hour * 3600 + now.minute * 60 + now.second:
+            raise ValueError("Der Beginn muss eine gültige Uhrzeit vor jetzt sein")
+        with DB_LOCK, db() as con:
+            row = con.execute("SELECT * FROM entries WHERE id=?", (int(payload.get("entry_id", 0)),)).fetchone()
+            if not row or row["work_date"] != date.today().isoformat() or row["type"] not in WORK_TYPES or row["end_time"] or row["finalized"]:
+                raise ValueError("Die Startzeit lässt sich hier nur für den laufenden heutigen Arbeitstag ändern")
+            starts = [parse_clock_seconds(segment.get("start")) for segment in json.loads(row["breaks_json"] or "[]")]
+            if any(start is not None and seconds > start for start in starts):
+                raise ValueError("Der Beginn darf nicht nach einer bereits erfassten Pause liegen")
+            con.execute("UPDATE entries SET start_time=?,updated_at=? WHERE id=?", (clock if len(clock) == 8 else clock + ":00", now.isoformat(timespec="seconds"), row["id"]))
+            updated = con.execute("SELECT * FROM entries WHERE id=?", (row["id"],)).fetchone()
+        create_safety_backup()
+        settings = get_settings()
+        entry = serialize_entry(updated, settings)
+        sync_live_activity(settings, "pause" if entry["is_paused"] else "resume", entry)
+        self.json_response({"ok": True, "entry": entry})
+
+    def vacation_suggestions(self, payload: dict) -> None:
+        year = int(payload.get("year", date.today().year))
+        budget = int(payload.get("max_days", 4))
+        if not date.today().year <= year <= date.today().year + 3 or not 1 <= budget <= 20:
+            raise ValueError("Bitte ein kommendes Jahr und 1 bis 20 Urlaubstage wählen")
+        settings = get_settings()
+        refresh_holidays(settings, year)
+        with db() as con:
+            rows = [dict(row) for row in con.execute("SELECT work_date,type FROM entries WHERE work_date BETWEEN ? AND ?", (f"{year}-01-01", f"{year}-12-31"))]
+        suggestions = bridge_day_suggestions(settings, year, budget, rows)
+        status = holiday_status(settings, year)
+        self.json_response({"ok": True, "suggestions": suggestions, "holiday_status": status})
 
     def save_day_plan(self, payload: dict) -> None:
         day = date.fromisoformat(str(payload.get("work_date", ""))).isoformat()
@@ -1482,6 +1629,10 @@ class Handler(SimpleHTTPRequestHandler):
         item["finalized"] = 1 if item["type"] in WORK_TYPES else 0
         now = datetime.now().isoformat(timespec="seconds")
         with DB_LOCK, db() as con:
+            if entry_id is not None:
+                original = con.execute("SELECT * FROM entries WHERE id=?", (entry_id,)).fetchone()
+                if original and original["work_date"] == date.today().isoformat() and original["type"] in WORK_TYPES and not original["end_time"] and not original["finalized"]:
+                    raise ValueError("Für den laufenden Arbeitstag bitte nur den Beginn korrigieren")
             existing = con.execute(
                 "SELECT id FROM entries WHERE work_date=? AND id<>? LIMIT 1",
                 (item["work_date"], entry_id or -1),
@@ -1702,6 +1853,14 @@ class Handler(SimpleHTTPRequestHandler):
         if payload.get("version") != 1 or not isinstance(payload.get("entries"), list):
             raise ValueError("Diese Sicherungsdatei wird nicht erkannt")
         settings = dict(payload.get("settings") or {})
+        for key in ("work_model_history", "salary_history"):
+            history = settings.get(key, [])
+            if not isinstance(history, list) or len(history) > 500:
+                raise ValueError("Ungültiger Änderungsverlauf in der Sicherung")
+            cleaned = [validate_history_item(item, key) for item in history]
+            if len({item["effective_from"] for item in cleaned}) != len(cleaned):
+                raise ValueError("Doppelte Änderungsdaten in der Sicherung")
+            settings[key] = sorted(cleaned, key=lambda item: item["effective_from"])
         plans = settings.get("overtime_plan_by_date") or {}
         cleaned_plans = {}
         if isinstance(plans, dict):

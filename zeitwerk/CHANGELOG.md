@@ -1,5 +1,13 @@
 # Änderungsverlauf
 
+## 5.3.0
+
+- Arbeitsmodell und Monatsbrutto mit unabhängigen „gültig ab“-Verläufen: alte Berechnungen behalten ihren bisherigen Stand, zukünftige Änderungen sind planbar
+- Eigene kompakte Startzeit-Korrektur während laufender Arbeit oder Pause: kein Arbeitsende, kein Tagesabschluss, keine verlorenen Pausen; allgemeine manuelle Korrekturen schließen einen laufenden heutigen Tag nicht mehr versehentlich ab
+- Brückentage-Planer mit bis zu sechs Auszeitvorschlägen: berücksichtigt datierte Arbeitswochen, bekannte Feiertage, Ausnahmen, manuell freie Tage und vorhandenen Urlaub; Arbeitsbuchungen werden nicht überschrieben
+- Ruhige, responsive Fenster mit nachvollziehbaren Angaben zu freien Tagen und neuen Urlaubstagen; eine Auswahl öffnet nur die Buchungsvorschau
+- Datierten Verlauf in JSON- und Sicherheitskopien aufgenommen; alte Sicherungen bleiben importierbar
+
 ## 5.2.0
 
 - Sammlung auf 19 Meilensteine erweitert; pro Kategorie steht die nächste Stufe im Vordergrund, weitere Ziele und erreichte Erfolge sind aufklappbar

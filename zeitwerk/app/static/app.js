@@ -152,8 +152,13 @@
     return jsDay === 0 ? 6 : jsDay - 1;
   }
 
-  function dailyTargets() {
-    const configured = state.settings.daily_work_minutes;
+  function effectiveValues(key, dayValue = new Date()) {
+    const day = typeof dayValue === "string" ? dayValue : isoDate(dayValue);
+    return (state.settings[key] || []).filter(item => item.effective_from <= day).sort((a, b) => b.effective_from.localeCompare(a.effective_from))[0] || state.settings;
+  }
+
+  function dailyTargets(dayValue = new Date()) {
+    const configured = effectiveValues("work_model_history", dayValue).daily_work_minutes;
     if (Array.isArray(configured) && configured.length === 7) return configured.map(value => Math.max(0, Number(value) || 0));
     const workdays = state.settings.workdays || [0, 1, 2, 3, 4];
     const perDay = Math.round(Number(state.settings.weekly_hours) * 60 / Math.max(1, workdays.length));
@@ -162,7 +167,7 @@
 
   function targetPerDay(dayValue = new Date()) {
     const day = typeof dayValue === "string" ? parseISO(dayValue) : new Date(dayValue);
-    return dailyTargets()[weekdayIndex(day)];
+    return dailyTargets(day)[weekdayIndex(day)];
   }
 
   function overtimeForDay(dayValue = new Date()) {
@@ -216,22 +221,24 @@
 
   function monthlyWorkdays(dayValue) {
     const day = typeof dayValue === "string" ? parseISO(dayValue) : new Date(dayValue);
+    const targets = dailyTargets(dayValue);
     const cursor = new Date(day.getFullYear(), day.getMonth(), 1);
     let count = 0;
     while (cursor.getMonth() === day.getMonth()) {
-      if (targetPerDay(cursor) > 0) count++;
+      if (targets[weekdayIndex(cursor)] > 0) count++;
       cursor.setDate(cursor.getDate() + 1);
     }
     return count;
   }
 
   function grossForMinutes(dayValue, minutes, monthlyOverride = null) {
-    const monthly = Math.max(0, Number(monthlyOverride ?? state.settings.monthly_gross_eur) || 0);
+    const salary = effectiveValues("salary_history", dayValue);
+    const monthly = Math.max(0, Number(monthlyOverride ?? salary.monthly_gross_eur) || 0);
     if (monthly) {
       const target = targetPerDay(dayValue);
       return target ? monthly / Math.max(1, monthlyWorkdays(dayValue)) * Math.min(1, Math.max(0, minutes) / target) : 0;
     }
-    return Math.max(0, minutes) / 60 * Math.max(0, Number(state.settings.hourly_gross_eur || 0));
+    return monthlyOverride !== null ? 0 : Math.max(0, minutes) / 60 * Math.max(0, Number(salary.hourly_gross_eur || 0));
   }
 
   function isWorkday(day) {
@@ -514,6 +521,7 @@
     card.classList.toggle("paused", Boolean(active?.is_paused));
     $("#timerTypePicker").classList.toggle("locked", Boolean(active));
     updateTimerButtons();
+    $("#correctStart").hidden = !active || active.work_date !== isoDate(new Date());
     $("#metaTarget").textContent = formatDuration(plannedTarget(active?.work_date || new Date()));
     $("#metaTargetLabel").textContent = overtimeForDay(active?.work_date || new Date()) ? "Tagesplan" : "Tagesziel";
     $("#timerOrbit span").textContent = overtimeForDay(active?.work_date || new Date()) ? "Tagesplan" : "Tagesziel";
@@ -1018,13 +1026,132 @@
     $$("[data-period-day]").forEach(button => button.addEventListener("click", () => { $("#periodDialog").close(); void openCalendarDay(button.dataset.periodDay); }));
   }
 
+  function datedLabel(day) {
+    return !day || day === "0001-01-01" ? "Bisheriger Stand" : `Ab ${parseISO(day).toLocaleDateString("de-DE")}`;
+  }
+
+  function renderDatedSettings() {
+    [["model", "work_model_history", "model"], ["salary", "salary_history", "salary"]].forEach(([kind, key, prefix]) => {
+      const current = effectiveValues(key);
+      $(`#${prefix}EffectiveLabel`).textContent = current.effective_from ? datedLabel(current.effective_from) : "Bisheriger Stand · frühere Tage bleiben erhalten";
+      const records = [...(state.settings[key] || [])].reverse();
+      $(`#${prefix}History`).innerHTML = records.length ? records.map(item => `<div class="history-row"><span><b>${escapeHTML(datedLabel(item.effective_from))}</b><small>${kind === "model" ? `${formatDuration(item.daily_work_minutes.reduce((sum, minutes) => sum + minutes, 0))} Std. pro Woche` : `${formatMoney(item.monthly_gross_eur)} brutto / Monat`}${item.effective_from > isoDate(new Date()) ? " · Geplant" : ""}</small></span>${item.effective_from !== "0001-01-01" ? `<button class="text-action" type="button" data-dated-edit="${kind}" data-date="${item.effective_from}" aria-label="${kind === "model" ? "Arbeitsmodell" : "Gehalt"} vom ${item.effective_from} bearbeiten">Bearbeiten</button>` : ""}</div>`).join("") : '<p class="settings-section-copy">Noch keine Änderungen. Dein bisheriger Stand wird bei der ersten Änderung automatisch bewahrt.</p>';
+    });
+    $$("[data-dated-edit]").forEach(button => button.addEventListener("click", () => openDatedChange(button.dataset.datedEdit, button.dataset.date)));
+  }
+
+  function openDatedChange(kind, day = isoDate(new Date())) {
+    $("#datedChangeKind").value = kind;
+    $("#datedChangeDate").value = day;
+    $("#datedChangeTitle").textContent = kind === "model" ? "Deine neue Arbeitswoche" : "Dein Monatsgehalt";
+    $("#datedModelFields").hidden = kind !== "model";
+    $("#datedSalaryField").hidden = kind !== "salary";
+    $("#datedSalaryAmount").required = kind === "salary";
+    $("#datedChangeError").textContent = "";
+    loadDatedChangeValues();
+    $("#datedChangeDialog").showModal();
+  }
+
+  function loadDatedChangeValues() {
+    const day = $("#datedChangeDate").value || isoDate(new Date());
+    $("#datedModelGrid").innerHTML = dailyTargets(day).map((minutes, index) => `<label><span>${["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"][index]}</span><input type="time" data-model-day="${index}" aria-label="Tagesziel ${["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"][index]}" value="${formatHoursMinutes(minutes)}" step="60" required></label>`).join("");
+    $$("#datedModelGrid input").forEach(input => { input.required = $("#datedChangeKind").value === "model"; input.addEventListener("input", updateDatedPreview); });
+    $("#datedSalaryAmount").value = Number(effectiveValues("salary_history", day).monthly_gross_eur || 0);
+    updateDatedPreview();
+  }
+
+  function updateDatedPreview() {
+    const day = $("#datedChangeDate").value;
+    const kind = $("#datedChangeKind").value;
+    const total = $$("#datedModelGrid input").reduce((sum, input) => sum + minutesFromTime(input.value), 0);
+    const amount = Number($("#datedSalaryAmount").value);
+    const existing = (state.settings[kind === "model" ? "work_model_history" : "salary_history"] || []).some(item => item.effective_from === day);
+    $("#datedChangePreview").textContent = `${kind === "model" ? `${formatDuration(total)} Std. pro Woche` : `${formatMoney(amount)} brutto / Monat`}. ${existing ? "Ersetzt die Änderung an diesem Datum." : "Gilt bis zur nächsten datierten Änderung."}${day < isoDate(new Date()) ? " Achtung: Ab diesem Datum werden auch vergangene Tage neu berechnet." : " Frühere Tage ändern sich nicht."}`;
+  }
+
+  async function saveDatedChange(event) {
+    event.preventDefault();
+    const button = event.submitter;
+    button.disabled = true;
+    try {
+      if (!await saveSettings()) throw new Error("Bitte zuerst die übrigen Einstellungen prüfen.");
+      const kind = $("#datedChangeKind").value;
+      const payload = { kind, effective_from: $("#datedChangeDate").value };
+      if (kind === "model") payload.daily_work_minutes = $$("#datedModelGrid input").map(input => minutesFromTime(input.value));
+      else { payload.monthly_gross_eur = Number($("#datedSalaryAmount").value); payload.hourly_gross_eur = 0; }
+      await api("api/settings/dated", { method: "POST", body: JSON.stringify(payload) });
+      $("#datedChangeDialog").close();
+      await loadYear(state.loadedYear, true);
+      toast("Änderung mit Startdatum gespeichert");
+    } catch (error) { $("#datedChangeError").textContent = error.message; }
+    finally { button.disabled = false; }
+  }
+
+  function openStartCorrection() {
+    if (!state.active || state.active.work_date !== isoDate(new Date())) return toast("Heute läuft kein Arbeitstag.", true);
+    $("#startCorrectionId").value = state.active.id;
+    $("#startCorrectionTime").value = state.active.start_time.slice(0, 5);
+    $("#startCorrectionStatus").textContent = state.active.is_paused ? "Deine aktuelle Pause läuft weiter." : "Nur der Beginn wird geändert. Kein Arbeitsende wird eingetragen.";
+    $("#startCorrectionDialog").showModal();
+  }
+
+  async function saveStartCorrection(event) {
+    event.preventDefault();
+    const button = event.submitter;
+    button.disabled = true;
+    try {
+      await api("api/timer/start-time", { method: "POST", body: JSON.stringify({ entry_id: Number($("#startCorrectionId").value), start_time: $("#startCorrectionTime").value }) });
+      $("#startCorrectionDialog").close();
+      await loadYear(state.loadedYear, true, true);
+      toast("Beginn korrigiert · dein Tag läuft weiter");
+    } catch (error) { $("#startCorrectionStatus").textContent = error.message; }
+    finally { button.disabled = false; }
+  }
+
+  function openVacationPlanner() {
+    const year = new Date().getFullYear();
+    $("#plannerYear").innerHTML = Array.from({ length: 4 }, (_, index) => `<option value="${year + index}">${year + index}</option>`).join("");
+    $("#plannerYear").value = Math.max(year, Math.min(year + 3, state.vacationYear));
+    $("#plannerStatus").textContent = "Wähle dein Jahr und die Zahl neuer Urlaubstage. Es wird nichts automatisch eingetragen.";
+    $("#plannerResults").replaceChildren();
+    $("#vacationPlannerDialog").showModal();
+  }
+
+  async function findVacationSuggestions(event) {
+    event.preventDefault();
+    const button = event.submitter;
+    button.disabled = true;
+    $("#plannerResults").replaceChildren();
+    $("#plannerStatus").textContent = "Deine Arbeitswoche und freien Tage werden verglichen …";
+    try {
+      const result = await api("api/vacation/suggestions", { method: "POST", body: JSON.stringify({ year: Number($("#plannerYear").value), max_days: Number($("#plannerBudget").value) }) });
+      const automatic = state.settings.holidays_enabled;
+      const loaded = result.holiday_status.fetched_at;
+      $("#plannerStatus").textContent = `${result.suggestions.length ? "Deine besten Auszeiten" : "Keine passenden Auszeiten gefunden. Versuche ein anderes Jahr oder mehr Urlaubstage."}${automatic ? loaded ? ` · Feiertage: ${result.holiday_status.state_name}` : " · Feiertage konnten nicht geladen werden; bitte prüfen." : " · Automatische Feiertage sind aus; manuell eingetragene freie Tage zählen mit."}${result.holiday_status.error && loaded ? " · Gespeicherte Feiertage verwendet; Aktualisierung fehlgeschlagen." : ""}`;
+      $("#plannerResults").innerHTML = result.suggestions.map((item, index) => `<article class="planner-option"><div class="planner-option-top"><span class="planner-rank">${index === 0 ? "Längste Auszeit" : "Weitere Möglichkeit"}</span><span class="planner-ratio">${(item.free_days / item.vacation_days).toFixed(1).replace(".", ",")}× freie Zeit</span></div><div class="planner-days"><strong>${item.free_days}</strong><span>Tage am Stück frei<small>mit ${item.vacation_days} neuen Urlaubstagen${item.already_booked ? ` · ${item.already_booked} bereits gebucht` : ""}</small></span></div><p class="planner-dates">${parseISO(item.start_date).toLocaleDateString("de-DE", { day: "numeric", month: "long" })} – ${parseISO(item.end_date).toLocaleDateString("de-DE", { day: "numeric", month: "long", year: "numeric" })}</p>${item.holidays.length ? `<p class="planner-holidays">${escapeHTML([...new Set(item.holidays.map(day => day.name))].join(" · "))}</p>` : ""}<button class="button quiet-button" type="button" data-plan-select="${index}">Zeitraum prüfen<svg aria-hidden="true"><use href="#i-right"></use></svg></button></article>`).join("");
+      $$("[data-plan-select]").forEach(control => control.addEventListener("click", async () => {
+        const item = result.suggestions[Number(control.dataset.planSelect)];
+        control.disabled = true;
+        try {
+          await loadYear(Number(item.start_date.slice(0, 4)), true, true);
+          $("#vacationPlannerDialog").close();
+          openVacationDialog(item.start_date, "settings");
+          $("#vacationEnd").value = item.end_date;
+          updateVacationRangePreview();
+        } catch (error) { $("#plannerStatus").textContent = error.message; }
+        finally { control.disabled = false; }
+      }));
+    } catch (error) { $("#plannerStatus").textContent = error.message; }
+    finally { button.disabled = false; }
+  }
+
   function renderSettings() {
     const s = state.settings;
     $("#settingName").value = s.display_name || "";
     $("#settingAfterWorkAnimation").checked = Boolean(s.after_work_animation_enabled);
     const targets = dailyTargets();
     $("#settingHours").value = (targets.reduce((sum, value) => sum + value, 0) / 60).toFixed(2).replace(/\.00$/, "");
-    targets.forEach((value, index) => { $(`#settingDay${index}`).value = formatHoursMinutes(value); });
+    targets.forEach((value, index) => { $(`#settingDay${index}`).value = formatHoursMinutes(value); $(`#settingDay${index}`).readOnly = true; });
     $("#settingAge").value = s.age_group;
     $("#settingStartDate").value = s.tracking_start_date || isoDate(new Date());
     state.vacationAllowancesDraft = { ...(s.vacation_allowance_by_year || {}) };
@@ -1035,7 +1162,8 @@
     $("#settingVacationYear").value = state.vacationYear;
     $("#settingVacation").value = vacationAllowance(state.vacationYear);
     $("#settingVacationDefault").value = Number(s.vacation_allowance || 0);
-    $("#settingMonthlyGross").value = Number(s.monthly_gross_eur || 0);
+    $("#settingMonthlyGross").value = Number(effectiveValues("salary_history").monthly_gross_eur || 0);
+    renderDatedSettings();
     $("#settingCarry").value = s.vacation_carryover;
     $("#settingBalance").value = s.previous_balance_minutes;
     $("#settingAutoBreak").checked = Boolean(s.auto_break_deduction);
@@ -1172,6 +1300,7 @@
   }
 
   function openEntryDialog(dateValue = isoDate(new Date()), entryId = null) {
+    if (state.active && dateValue === isoDate(new Date()) && state.active.work_date === dateValue && (!entryId || entryId === state.active.id)) return openStartCorrection();
     const dayEntries = entriesOn(dateValue);
     const existing = entryId ? state.entries.find(item => item.id === entryId) : dayEntries.find(item => ["B", "H"].includes(item.type)) || dayEntries[0];
     $("#entryDialogTitle").textContent = existing ? "Arbeitszeit korrigieren" : "Arbeitszeit nachtragen";
@@ -1292,16 +1421,19 @@
       box.classList.add("warning");
       return;
     }
-    let workdays = 0;
+    let workdays = 0, alreadyBooked = 0;
     const holidayDays = new Set(state.settings.holidays_enabled ? (state.holidays?.holidays || []).filter(item => !(state.settings.holiday_exclusions || []).includes(item.date)).map(item => item.date) : []);
     for (let index = 0; index < days; index++) {
       const day = parseISO(first); day.setDate(day.getDate() + index);
       const key = isoDate(day);
-      if (targetPerDay(day) > 0 && !holidayDays.has(key) && !entriesOn(key).some(entry => entry.type === "FT")) workdays++;
+      if (targetPerDay(day) > 0 && !holidayDays.has(key) && !entriesOn(key).some(entry => entry.type === "FT")) {
+        workdays++;
+        if (!state.vacationEditing && entriesOn(key).some(entry => entry.type === "U")) alreadyBooked++;
+      }
     }
     box.classList.remove("warning");
     const knownYear = first.slice(0, 4) === String(state.loadedYear) && last.slice(0, 4) === String(state.loadedYear);
-    box.textContent = `${knownYear ? "" : "Voraussichtlich "}${workdays} ${workdays === 1 ? "Urlaubstag" : "Urlaubstage"} · ${days - workdays} freie Tage oder bekannte Feiertage.${knownYear ? "" : " Weitere Feiertage werden beim Speichern geprüft."}`;
+    box.textContent = `${knownYear ? "" : "Voraussichtlich "}${workdays - alreadyBooked} ${workdays - alreadyBooked === 1 ? "Urlaubstag" : "Urlaubstage"}${alreadyBooked ? ` neu · ${alreadyBooked} bereits eingetragen` : ""} · ${days - workdays} freie Tage oder bekannte Feiertage.${knownYear ? "" : " Weitere Feiertage werden beim Speichern geprüft."}`;
   }
 
   async function saveVacationRange(event) {
@@ -1406,7 +1538,7 @@
     settingAfterWorkAnimation: ["after_work_animation_enabled"],
     settingName: ["display_name"], settingAge: ["age_group"], settingStartDate: ["tracking_start_date"],
     settingVacation: ["vacation_allowance_by_year"], settingVacationDefault: ["vacation_allowance"],
-    settingCarry: ["vacation_carryover"], settingMonthlyGross: ["monthly_gross_eur"], settingBalance: ["previous_balance_minutes"],
+    settingCarry: ["vacation_carryover"], settingBalance: ["previous_balance_minutes"],
     settingAutoBreak: ["auto_break_deduction"], settingLiveActivity: ["live_activity_enabled"],
     settingLiveService: ["live_activity_service"], settingMilestones: ["milestone_notifications_enabled"],
     settingMilestoneStyle: ["milestone_notification_style"], settingGoalNotification: ["goal_notification_enabled"],
@@ -1414,7 +1546,6 @@
     settingPauseMinimum: ["pause_minimum_notification_enabled"], settingPauseReminder: ["pause_reminder_enabled"],
     settingEndSoon: ["end_soon_notification_enabled"], settingOvertimeNotification: ["overtime_notification_enabled"],
     settingHolidays: ["holidays_enabled", "holiday_state"], settingHolidayState: ["holidays_enabled", "holiday_state"],
-    ...Object.fromEntries(Array.from({ length: 7 }, (_, index) => [`settingDay${index}`, ["daily_work_minutes", "weekly_hours", "workdays"]])),
   };
 
   function setSettingsStatus(status, text) {
@@ -1530,6 +1661,16 @@
   }
 
   function bindEvents() {
+    $$("[data-close]").forEach(button => button.addEventListener("click", () => document.getElementById(button.dataset.close).close()));
+    $("#openModelChange").addEventListener("click", () => openDatedChange("model"));
+    $("#openSalaryChange").addEventListener("click", () => openDatedChange("salary"));
+    $("#datedChangeForm").addEventListener("submit", saveDatedChange);
+    $("#datedChangeDate").addEventListener("change", loadDatedChangeValues);
+    $("#datedSalaryAmount").addEventListener("input", updateDatedPreview);
+    $("#correctStart").addEventListener("click", openStartCorrection);
+    $("#startCorrectionForm").addEventListener("submit", saveStartCorrection);
+    $("#openVacationPlanner").addEventListener("click", openVacationPlanner);
+    $("#vacationPlannerForm").addEventListener("submit", findVacationSuggestions);
     $("#balanceChip").addEventListener("click", () => { renderAccountSummary(); $("#balanceDialog").showModal(); });
     $("#closeAccount").addEventListener("click", () => $("#balanceDialog").close());
     $("#accountReports").addEventListener("click", async () => {
