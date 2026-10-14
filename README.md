@@ -28,7 +28,7 @@ Zeitwerk läuft auf deinem Home-Assistant-Gerät. Deine Zeiten bleiben im persis
 3. Installiere **Zeitwerk – Arbeitszeit**, starte die App und öffne ihre **Weboberfläche**.
 4. Stelle unter **Einstellungen** deine Arbeitstage, Tagesziele und deinen Urlaubsanspruch ein.
 
-Bei einer bestehenden Repository-Installation: Im App-Store **Nach Updates suchen** und Zeitwerk auf **5.1.0** aktualisieren. Vorher eine JSON-Sicherung herunterladen; nach dem Update die Weboberfläche neu laden.
+Bei einer bestehenden Repository-Installation: Im App-Store **Nach Updates suchen** und Zeitwerk auf **5.1.1** aktualisieren. Vorher eine JSON-Sicherung herunterladen; nach dem Update die Weboberfläche neu laden.
 
 > **Du nutzt bereits eine lokale Zeitwerk-Installation?** Die Repository-Version hat eine andere App-Kennung und übernimmt deine Daten **nicht automatisch**. Lade zuerst unter **Einstellungen → Daten & Sicherung** ein JSON-Backup herunter. Installiere die neue App zusätzlich, importiere das Backup und prüfe deine Zeiten, bevor du die alte Installation entfernst. Beide Apps können nicht gleichzeitig den Host-Port `18099` nutzen; stoppe dafür vorübergehend die alte App.
 

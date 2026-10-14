@@ -1,5 +1,10 @@
 # Änderungsverlauf
 
+## 5.1.1
+
+- Feierabendansicht nennt das Tagessoll nur noch unter dem Fortschrittsbalken
+- Prozentanzeige zeigt auch Werte über 100 %, etwa 120 % bei Überstunden; der Balken bleibt maximal voll und Screenreader erhalten den tatsächlichen Prozentsatz
+
 ## 5.1.0
 
 - Live-Zeitkonto; im Konto-Fenster getrennte Anzeige des Guthabens vor heute und der heutigen Abweichung vom Soll

@@ -1102,7 +1102,7 @@ def summary_for(entries: list[dict], settings: dict, start_date: str, end_date: 
 
 
 class Handler(SimpleHTTPRequestHandler):
-    server_version = "Zeitwerk/5.1.0"
+    server_version = "Zeitwerk/5.1.1"
     extensions_map = {
         **SimpleHTTPRequestHandler.extensions_map,
         ".webmanifest": "application/manifest+json",

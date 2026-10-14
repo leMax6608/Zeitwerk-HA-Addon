@@ -567,9 +567,11 @@
     $("#finishedHeadline").textContent = isX ? "Für heute sind" : "Heute hast du";
     $("#finishedUnit").textContent = isX ? "Stunden verbucht" : "Stunden gearbeitet";
     $("#finishedDuration").textContent = formatDuration(entry.worked_minutes);
-    const progress = target > 0 ? Math.min(100, Math.round(entry.worked_minutes / target * 100)) : 100;
-    $("#finishedProgress").style.setProperty("--finished-progress", `${progress}%`);
-    $("#finishedProgress").setAttribute("aria-valuenow", String(progress));
+    const progress = target > 0 ? Math.round(entry.worked_minutes / target * 100) : 100;
+    const fill = Math.min(100, progress);
+    $("#finishedProgress").style.setProperty("--finished-progress", `${fill}%`);
+    $("#finishedProgress").setAttribute("aria-valuenow", String(fill));
+    $("#finishedProgress").setAttribute("aria-valuetext", target > 0 ? `${progress} % des Tagesziels erreicht` : "Kein Tagesziel an diesem Tag");
     $("#finishedGoalLabel").textContent = target > 0 ? `${progress} % von ${formatDuration(target)} Std. Tagesziel` : "Kein Tagesziel an diesem Tag";
     $("#finishedSpanLabel").textContent = isX ? "Erfassung" : "Beginn – Ende";
     $("#finishedSpan").textContent = isX ? "Ohne Uhrzeit" : `${entry.start_time?.slice(0, 5) || "–"} – ${entry.end_time?.slice(0, 5) || "–"}`;
@@ -579,7 +581,6 @@
     $("#finishedBalance").classList.toggle("negative", delta < 0);
     $("#finishedDelta").classList.toggle("is-negative", delta < 0);
     $("#finishedDeltaLabel").textContent = delta > 0 ? "über deinem Tagessoll" : delta < 0 ? "unter deinem Tagessoll" : "genau im Tagessoll";
-    $("#finishedTarget").textContent = `${formatDuration(target)} Std. Soll`;
     $("#finishedMessage").textContent = isX
       ? "Dein Tagesziel ist vollständig erfüllt und gespeichert."
       : delta >= 0

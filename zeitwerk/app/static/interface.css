@@ -706,8 +706,7 @@ dialog[open] { animation: zeitwerk-dialog-enter .28s cubic-bezier(.2, .75, .2, 1
 .finished-delta { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 18px; border: 1px solid var(--brand-border); border-radius: 17px; background: var(--brand-soft); }
 .finished-delta > div { display: grid; gap: 4px; }
 .finished-delta strong { color: var(--brand-strong); font-size: 1.7rem; line-height: 1.1; letter-spacing: -.025em; font-weight: 640; font-variant-numeric: tabular-nums; }
-.finished-delta span, .finished-delta small { color: var(--muted); font-size: .74rem; }
-.finished-delta small { text-align: right; }
+.finished-delta span { color: var(--muted); font-size: .74rem; }
 .finished-delta.is-negative { background: var(--surface-2); border-color: var(--line); }
 .finished-delta.is-negative strong { color: var(--danger); }
 .finished-goal { gap: 9px; margin: 0; }
