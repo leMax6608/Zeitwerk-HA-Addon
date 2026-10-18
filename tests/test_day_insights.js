@@ -33,6 +33,25 @@ const totals = helper("periodSummary", {
   targetBetween: () => 480,
 });
 const result = totals({ first: today, last: today });
+const reportMonths = helper("reportMonths", {
+  MONTHS: ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"],
+  isoDate: day => `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`,
+});
+const reportToday = new Date(2026, 9, 18);
+const reportEntries = [
+  { work_date: "2026-02-02", worked_minutes: 480 },
+  { work_date: "2026-08-03", worked_minutes: 400 },
+  { work_date: "2026-09-01", worked_minutes: 0, account_minutes: 480, type: "U" },
+  { work_date: "2026-11-02", worked_minutes: 480, type: "X" },
+  { work_date: "2025-12-01", worked_minutes: 480 },
+];
+assert.deepEqual(Array.from(reportMonths(2026, reportEntries, reportToday), period => period.label), ["Oktober", "August", "Februar"]);
+assert.equal(reportMonths(2026, reportEntries, reportToday)[0].current, true);
+assert.equal(reportMonths(2026, [], reportToday).length, 1, "Current month remains visible before any work");
+assert.equal(reportMonths(2025, [], reportToday).length, 0);
+assert.equal(reportMonths(2027, reportEntries, reportToday).length, 0);
+assert.equal(reportMonths(2025, reportEntries, reportToday)[0].current, false);
+assert.equal(reportMonths(2026, [{ work_date: "2026-10-01", worked_minutes: 480 }], reportToday).length, 1, "Do not duplicate the current month");
 assert.equal(result.worked, 60);
 assert.equal(result.account, 480);
 assert.equal(result.saldo, 0, "Credited time, not only worked time, determines the balance");

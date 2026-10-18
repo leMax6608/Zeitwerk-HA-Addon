@@ -1,5 +1,12 @@
 # Änderungsverlauf
 
+## 5.3.1
+
+- Monatsverlauf blendet Monate ohne geleistete Arbeitszeit aus; der aktuelle Monat bleibt auch ohne Buchung sichtbar, steht ganz oben und ist eindeutig markiert
+- Leere Jahre erhalten einen verständlichen Hinweis; Monatsdetails bleiben nach dem Filtern richtig zugeordnet
+- Tagesplan-Zahnrad ist direkt an der Begrüßung ausgerichtet, auch bei mehrzeiligen Überschriften
+- Startzeit-Korrektur mit sauber zentriertem Symbol und einheitlicher Höhe der Zeitbeschriftungen statt negativer Abstände
+
 ## 5.3.0
 
 - Arbeitsmodell und Monatsbrutto mit unabhängigen „gültig ab“-Verläufen: alte Berechnungen behalten ihren bisherigen Stand, zukünftige Änderungen sind planbar

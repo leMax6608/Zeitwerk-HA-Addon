@@ -973,12 +973,20 @@
     return { entries, future, worked, account, target, saldo: account - target };
   }
 
+  function reportMonths(year, entries, today = new Date()) {
+    const todayKey = isoDate(today);
+    const workedMonths = new Set(entries.filter(entry => entry.work_date <= todayKey && Number(entry.worked_minutes) > 0).map(entry => entry.work_date.slice(0, 7)));
+    return MONTHS.map((label, month) => ({ label, first: new Date(year, month, 1), last: new Date(year, month + 1, 0), current: year === today.getFullYear() && month === today.getMonth() }))
+      .filter(period => period.current || workedMonths.has(isoDate(period.first).slice(0, 7)))
+      .sort((a, b) => Number(b.current) - Number(a.current) || b.first - a.first);
+  }
+
   function renderPeriodList() {
     const year = state.loadedYear;
     const yearStart = new Date(year, 0, 1), yearEnd = new Date(year, 11, 31);
     const todayKey = isoDate(new Date());
     const dates = day => new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "2-digit" }).format(day);
-    state.reportPeriods = state.reportMode === "month" ? MONTHS.map((label, month) => ({ label, first: new Date(year, month, 1), last: new Date(year, month + 1, 0) })) : [];
+    state.reportPeriods = state.reportMode === "month" ? reportMonths(year, state.entries) : [];
     if (state.reportMode === "week") {
       for (let monday = mondayOf(yearStart); monday <= yearEnd; monday.setDate(monday.getDate() + 7)) {
         const sunday = new Date(monday); sunday.setDate(sunday.getDate() + 6);
@@ -995,8 +1003,8 @@
     $("#monthList").innerHTML = state.reportPeriods.map((period, index) => {
       const values = periodSummary(period);
       const ratio = Math.min(100, values.account / Math.max(1, values.target) * 100);
-      return `<button type="button" class="period-row ${values.future ? "future" : ""}" data-period-index="${index}" aria-label="${escapeHTML(period.label)}: Details öffnen"><span class="period-name"><b>${period.label}</b><small>${period.subtitle || `${year}${values.future ? " · Geplant" : ""}`}</small></span><span class="period-progress" aria-hidden="true"><i style="width:${values.future ? 0 : ratio}%"></i></span><span class="period-number"><small>Gearbeitet</small><b>${values.future ? "–" : formatDuration(values.worked)}</b></span><span class="period-number"><small>${values.future ? "Soll geplant" : "Soll bis heute"}</small><b>${formatDuration(values.target)}</b></span><span class="period-number ${values.saldo < 0 ? "negative" : ""}"><small>Saldo</small><b>${values.future ? "–" : formatSigned(values.saldo)}</b></span><svg aria-hidden="true"><use href="#i-right"></use></svg></button>`;
-    }).join("");
+      return `<button type="button" class="period-row ${values.future ? "future" : ""} ${period.current ? "is-current" : ""}" ${period.current ? 'aria-current="date"' : ""} data-period-index="${index}" aria-label="${escapeHTML(period.label)}${period.current ? ", aktueller Monat" : ""}: Details öffnen"><span class="period-name"><b>${period.label}</b><small>${period.current ? '<span class="period-current-label">Aktueller Monat</span>' : period.subtitle || `${year}${values.future ? " · Geplant" : ""}`}</small></span><span class="period-progress" aria-hidden="true"><i style="width:${values.future ? 0 : ratio}%"></i></span><span class="period-number"><small>Gearbeitet</small><b>${values.future ? "–" : formatDuration(values.worked)}</b></span><span class="period-number"><small>${values.future ? "Soll geplant" : "Soll bis heute"}</small><b>${formatDuration(values.target)}</b></span><span class="period-number ${values.saldo < 0 ? "negative" : ""}"><small>Saldo</small><b>${values.future ? "–" : formatSigned(values.saldo)}</b></span><svg aria-hidden="true"><use href="#i-right"></use></svg></button>`;
+    }).join("") || '<p class="report-empty">In diesem Jahr wurde noch keine Arbeitszeit erfasst.</p>';
     $$("[data-period-index]").forEach(button => button.addEventListener("click", () => {
       state.selectedPeriod = state.reportPeriods[Number(button.dataset.periodIndex)];
       renderPeriodDetails(state.selectedPeriod);
